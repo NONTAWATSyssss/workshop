@@ -1,0 +1,12 @@
+.git/
+.npm-cache/
+node_modules/
+storage/
+tests/
+*.log
+.env
+.env.*
+
+.refactor-backups/
+docs/
+.vscode/

@@ -1,0 +1,28 @@
+{
+  "name": "bsru-workshop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BSRU Workshop announcements, membership and workshops for Vercel and Supabase",
+  "engines": {
+    "node": "^22.13.0 || 24.x"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "start": "node server.js",
+    "check": "node scripts/check.js",
+    "db:status": "node scripts/database.js status",
+    "test": "node --experimental-vm-modules --test tests/*.test.js",
+    "format": "prettier --write \"api/**/*.js\" \"src/**/*.js\" \"scripts/**/*.js\" \"tests/**/*.js\" \"public/assets/js/**/*.js\" \"public/assets/css/**/*.css\" public/index.html server.js package.json vercel.json",
+    "format:check": "prettier --check \"api/**/*.js\" \"src/**/*.js\" \"scripts/**/*.js\" \"tests/**/*.js\" \"public/assets/js/**/*.js\" \"public/assets/css/**/*.css\" public/index.html server.js package.json vercel.json",
+    "db:setup": "node scripts/database.js setup"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.13",
+    "linkedom": "^0.18.14",
+    "prettier": "^3.9.10"
+  },
+  "dependencies": {
+    "pg": "^8.23.1",
+    "nodemailer": "^10.3.1"
+  }
+}

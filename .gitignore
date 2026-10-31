@@ -1,0 +1,11 @@
+node_modules/
+storage/*.sqlite*
+storage/*.log
+storage/backups/
+.npm-cache/
+.env
+.env.*
+!.env.example
+.vercel/
+
+.refactor-backups/

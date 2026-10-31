@@ -1,0 +1,1703 @@
+import { createActivityViews } from "./views/activities.js";
+import { createManagementViews } from "./views/management.js";
+import { createMembershipViews } from "./views/membership.js";
+import { createDateRangePicker } from "./views/date-range.js";
+
+let apiCsrf = null,
+  apiSaving = Promise.resolve(),
+  apiSaveCount = 0,
+  apiSaveEpoch = 0,
+  apiPollTimer = null;
+
+let syncMessage = "กำลังเชื่อมต่อ…";
+
+function updateSync(message) {
+  syncMessage = message;
+  document.querySelectorAll("[data-sync-status]").forEach((el) => {
+    el.textContent = message;
+  });
+}
+
+async function apiRequest(endpoint, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (options.body !== undefined && !headers.has("Content-Type"))
+    headers.set("Content-Type", "application/json");
+  if (apiCsrf && options.method && options.method !== "GET")
+    headers.set("X-CSRF-Token", apiCsrf);
+  const response = await fetch(endpoint, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {}
+  if (!response.ok)
+    throw Object.assign(
+      new Error(payload.error || "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"),
+      {
+        status: response.status,
+        field: payload.field,
+        code: payload.code,
+      },
+    );
+  return payload;
+}
+
+const $ = (s) => document.querySelector(s),
+  esc = (v) =>
+    String(v ?? "").replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+    );
+
+const randomBytes = (n) => {
+  const b = new Uint8Array(n);
+  if (globalThis.crypto?.getRandomValues)
+    return globalThis.crypto.getRandomValues(b);
+  for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256);
+  return b;
+};
+
+const uid = () =>
+  globalThis.crypto?.randomUUID?.() ||
+  Date.now().toString(36) +
+    Array.from(randomBytes(16), (b) => b.toString(16).padStart(2, "0")).join(
+      "",
+    );
+
+const LOGO = "/assets/images/bsru-workshop-logo.png";
+
+const DEFAULT_WORKSHOP_COVER = "/assets/images/image-002.jpg";
+
+const issues = [
+  "อีเมลกับรหัสไม่ตรงกัน เข้าสู่ระบบไม่ได้",
+  "จำนวนชั่วโมงอบรมไม่ถูกต้อง",
+  "ยกเลิกอบรมไม่ได้",
+  "เข้าอบรมแล้ว แต่ไปขึ้นที่สถานะว่าไม่ได้เข้าร่วม",
+  "ไม่ได้เข้าร่วมงาน แต่ขึ้นว่าเข้าร่วมงาน",
+  "ข้อมูลส่วนตัวที่กรอกตอนสมัครเข้าสู่ระบบไม่ตรงกับข้อมูลที่เจ้าหน้าที่ส่งมา",
+  "แดชบอร์ดเข้าร่วมงานกับข้อมูลเข้าร่วมงานไม่ตรงกัน",
+  "เลือกรอบเวลาหรือกลุ่มเวิร์กช็อปไม่ได้ / แสดงรอบไม่ตรง",
+  "ข้อมูลสถานที่ / ห้องจัดเวิร์กช็อปในแอปไม่ถูกต้อง หรือแผนที่คลาดเคลื่อน",
+  "ลงทะเบียนเวิร์กช็อปไม่ได้",
+];
+
+const labels = {
+  PENDING: "รอดำเนินการ",
+  ATTENDED: "เข้าร่วมงานแล้ว",
+  ABSENT: "ไม่ได้เข้าร่วม",
+  CANCELLED: "ยกเลิกการลงทะเบียน",
+  APPROVED: "อนุมัติแล้ว",
+  WAITING: "รอเจ้าหน้าที่อนุมัติ",
+};
+
+const store = {
+  users: [],
+  workshops: [],
+  registrations: [],
+  complaints: [],
+  ratings: [],
+  notifications: [],
+  auditLog: [],
+  revision: 0,
+};
+
+let state = {
+    workshopMenuTrigger: null,
+    participantWorkshop: "all",
+    portal: "user",
+    userId: null,
+    page: "home",
+    view: "open",
+    search: "",
+    filter: "all",
+    dashboardMonths: 6,
+    dashboardAgendaOpen: false,
+    slide: 0,
+    notificationFilter: "general",
+    notificationQuery: "",
+    promoSlide: 0,
+    approvalQuery: "",
+    approvalStatus: "WAITING",
+    participantQuery: "",
+    participantStatus: "all",
+    managePage: 1,
+    manageView: "current",
+    managePageSize: 10,
+    manageSort: "priority",
+    archiveYear: null,
+    archiveMonth: "all",
+    archiveQuery: "",
+    archivePage: 1,
+    archiveWorkshop: null,
+    archiveParticipantQuery: "",
+    archiveParticipantStatus: "all",
+    archiveParticipantPage: 1,
+  },
+  ready = false,
+  initializing = false,
+  bootstrapError = false,
+  bootstrapStage = "catalog",
+  modalReturn = null,
+  modalOverflow = "",
+  toastTimer;
+
+const user = () => store.users.find((u) => u.id === state.userId);
+
+const staff = () => state.portal === "staff" && user()?.role === "staff";
+
+const member = () =>
+  state.portal === "user" &&
+  user()?.role === "user" &&
+  user()?.status === "APPROVED";
+
+const badge = (s) =>
+  `<span class="badge ${esc(s)}">${esc(labels[s] || s)}</span>`;
+
+const fmt = (s) =>
+  new Date(s).toLocaleString("th-TH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+const occupancy = (id) =>
+  !staff() &&
+  Number.isFinite(store.workshops.find((w) => w.id === id)?.occupancy)
+    ? store.workshops.find((w) => w.id === id).occupancy
+    : store.registrations.filter(
+        (r) => r.workshopId === id && r.status !== "CANCELLED",
+      ).length;
+
+const scheduledPhase = (w) =>
+  Date.now() < +new Date(w.start)
+    ? "upcoming"
+    : Date.now() <= +new Date(w.end)
+      ? "ongoing"
+      : "finished";
+
+const phase = (w) =>
+  w.cancelled ? "cancelled" : w.closed ? "closed" : scheduledPhase(w);
+
+const phaseLabel = (w) =>
+  ({
+    upcoming: "เร็วๆ นี้",
+    ongoing: "ดำเนินการอยู่",
+    finished: "เสร็จสิ้นแล้ว",
+    closed: "ปิดรับสมัคร",
+    cancelled: "ยกเลิกกิจกรรม",
+  })[phase(w)];
+
+function toast(msg) {
+  clearTimeout(toastTimer);
+  $("#toast-root").innerHTML = `<div class="toast">${esc(msg)}</div>`;
+  toastTimer = setTimeout(() => ($("#toast-root").innerHTML = ""), 4000);
+}
+
+function commit(msg) {
+  store.revision++;
+  render();
+  if (apiCsrf && state.userId) {
+    updateSync("กำลังบันทึก…");
+    apiSaveCount++;
+    const epoch = apiSaveEpoch,
+      actor = state.userId;
+    const snapshot = JSON.parse(JSON.stringify(store));
+    apiSaving = apiSaving
+      .then(() =>
+        epoch === apiSaveEpoch && actor === state.userId
+          ? apiRequest("/api/store", {
+              method: "POST",
+              body: JSON.stringify({ store: snapshot }),
+            })
+          : null,
+      )
+      .then((result) => {
+        if (result && epoch === apiSaveEpoch && actor === state.userId) {
+          store.revision = Math.max(store.revision, result.revision);
+          if (apiSaveCount === 1) {
+            Object.assign(store, result.store);
+            render();
+          }
+          updateSync(
+            "บันทึกแล้ว " +
+              new Date().toLocaleTimeString("th-TH", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+          );
+          if (msg) toast(msg);
+        }
+      })
+      .catch(async (error) => {
+        if (actor !== state.userId || epoch !== apiSaveEpoch) return;
+        apiSaveEpoch++;
+        updateSync("บันทึกไม่สำเร็จ · กำลังโหลดข้อมูลล่าสุด");
+        toast(error.message);
+        try {
+          const latest = await apiRequest("/api/store");
+          if (actor !== state.userId) return;
+          Object.assign(store, latest.store);
+          render();
+        } catch {
+          updateSync("เชื่อมต่อขัดข้อง · โปรดตรวจสอบก่อนทำรายการต่อ");
+        }
+      })
+      .finally(() => {
+        apiSaveCount--;
+        if (
+          epoch === apiSaveEpoch &&
+          actor === state.userId &&
+          state.page === "participants"
+        )
+          render();
+      });
+  }
+  return apiSaving;
+}
+
+const hoursOf = (r) =>
+  r.status === "ATTENDED"
+    ? store.workshops.find((w) => w.id === r.workshopId)?.hours || 0
+    : 0;
+
+const number = (n) =>
+  Number(n).toLocaleString("th-TH", { maximumFractionDigits: 2 });
+
+const input = (label, name, type = "text", extra = "") =>
+  `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" ${extra} required></div>`;
+
+function shell(content) {
+  const u = user(),
+    a = staff();
+  const icons = {
+    dashboard: "fa-chart-pie",
+    manage: "fa-layer-group",
+    workshops: "fa-compass",
+    mine: "fa-bookmark",
+    approvals: "fa-user-check",
+    participants: "fa-users",
+    archive: "fa-clock-rotate-left",
+    complaints: "fa-comments",
+    "my-complaints": "fa-comment-dots",
+    reports: "fa-chart-simple",
+    notifications: "fa-bell",
+  };
+  const nav = u
+    ? a
+      ? [
+          ["dashboard", "ภาพรวม"],
+          ["manage", "จัดการเวิร์กช็อป"],
+          ["approvals", "อนุมัติผู้ใช้งาน"],
+          ["participants", "ผู้เข้าร่วมอบรม"],
+          ["archive", "เวิร์กช็อปย้อนหลัง"],
+          ["complaints", "แจ้งปัญหาและความช่วยเหลือ"],
+        ]
+      : [
+          ["dashboard", "ภาพรวมของฉัน"],
+          ["workshops", "ค้นหาเวิร์กช็อป"],
+          ["mine", "กิจกรรมของฉัน"],
+          ["reports", "ผลการอบรม"],
+          ["notifications", "การแจ้งเตือน"],
+          ["my-complaints", "คำร้องของฉัน"],
+        ]
+    : [["workshops", "กิจกรรมทั้งหมด"]];
+  const active =
+    nav.find(([id]) => id === state.page)?.[1] || "พื้นที่การเรียนรู้";
+  const unread = u
+    ? store.notifications.filter((n) => n.userId === u.id && !n.readAt).length
+    : 0;
+  return `<a class="skip-link" href="#main-content">ข้ามไปยังเนื้อหา</a><div class="app-frame ${u ? "is-authenticated" : "is-public"}">
+      <header class="nav"><div class="wrap navin">
+        <a class="brand" href="${u ? "#dashboard" : "#home"}" data-action="${u ? "page" : "public-page"}" data-id="${u ? "dashboard" : "home"}"><div class="brandmark app-logo"><img src="${LOGO}" alt="BSRU Workshop"></div><div class="brand-copy"><b class="brand-title">ระบบจัดการอบรมและเวิร์กช็อป</b><div class="brand-institution">มหาวิทยาลัยราชภัฏบ้านสมเด็จเจ้าพระยา</div></div></a>
+        ${u ? `<div class="workspace-label">พื้นที่ทำงาน <span>/</span> <b>${esc(active)}</b></div>` : '<span class="header-motto"><span class="status-dot"></span> เรียนรู้วันนี้ เติบโตได้ทุกวัน</span>'}
+        <div class="header-actions">
+        ${member() ? `<button class="btn icon-button" data-action="page" data-id="notifications" aria-label="การแจ้งเตือน ${unread} รายการที่ยังไม่อ่าน"><i class="fa-regular fa-bell" aria-hidden="true"></i>${unread ? '<span class="notification-dot"></span>' : ""}</button>` : ""}
+        ${u ? membershipUi.accountMenu(u) : `<nav class="public-nav" aria-label="เมนูหลัก"><button data-action="public-page" data-id="home" ${state.page === "home" ? 'aria-current="page"' : ""}>หน้าแรก</button><button data-action="public-page" data-id="workshops" ${state.page === "workshops" ? 'aria-current="page"' : ""}>กิจกรรมอบรม</button></nav><button type="button" class="btn primary public-login" data-action="login"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> Login</button>`}
+        </div>
+      </div></header>
+      ${
+        u
+          ? `<aside class="sidebar"><div class="sidebar-label">${a ? "จัดการพื้นที่การเรียนรู้" : "พื้นที่การเรียนรู้ของคุณ"}</div><nav class="side-nav" aria-label="เมนูหลัก">${nav.map(([id, label]) => `<button data-action="page" data-id="${id}" class="${state.page === id ? "active" : ""}" ${state.page === id ? 'aria-current="page"' : ""}><i class="fa-solid ${icons[id]}" aria-hidden="true"></i><span>${label}</span>${id === "notifications" && unread ? `<span class="nav-count">${unread}</span>` : ""}</button>`).join("")}</nav>
+        <div class="sidebar-note"><span class="note-spark"><i class="fa-solid fa-sparkles fa-star" aria-hidden="true"></i></span><b>ก้าวเล็ก ๆ สู่โอกาสใหม่</b><p>ทุกการเรียนรู้ คืออีกก้าวของการเติบโต</p>${member() ? '<button class="btn small" data-action="page" data-id="workshops">สำรวจเวิร์กช็อป <span aria-hidden="true">↗</span></button>' : '<span class="sub">สร้างประสบการณ์ที่ดีไปด้วยกัน</span>'}</div>
+        <div class="sidebar-bottom">${member() ? '<button data-action="support"><i class="fa-regular fa-circle-question" aria-hidden="true"></i> แจ้งปัญหาการใช้งาน</button>' : ""}<div class="profile-card"><span class="profile-avatar">${esc(Array.from(u.name)[0])}</span><div><b>${esc(u.name)}</b><span>${a ? "เจ้าหน้าที่ดูแลระบบ" : "สมาชิก BSRU Workshop"}</span></div></div></div>
+      </aside>`
+          : ""
+      }
+      <main id="main-content" class="wrap main" tabindex="-1"><div class="page-stage">${content}</div><footer class="foot"><span>BSRU Workshop<span class="brand-dot">.</span></span><span>เรียนรู้ · สร้างสรรค์ · เติบโตไปด้วยกัน</span><span>มหาวิทยาลัยราชภัฏบ้านสมเด็จเจ้าพระยา</span></footer></main></div>`;
+}
+
+let pendingConfirm = null,
+  confirmReturn = null;
+
+function askConfirm(message) {
+  if (pendingConfirm) return Promise.resolve(false);
+  confirmReturn = document.activeElement;
+  return new Promise((resolve) => {
+    pendingConfirm = resolve;
+    $("#confirm-root").innerHTML =
+      `<div class="dialog-back confirm-back"><section class="dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message"><h2 id="confirm-title">ยืนยันการดำเนินการ</h2><p id="confirm-message">${esc(message)}</p><div class="row" style="justify-content:flex-end"><button class="btn" data-action="answer-no">ไม่ใช่ / กลับไปแก้ไข</button><button class="btn primary" data-action="answer-yes">ใช่ ยืนยัน</button></div></section></div>`;
+    $('#confirm-root [data-action="answer-no"]')?.focus();
+  });
+}
+
+function finishConfirm(answer) {
+  const resolve = pendingConfirm;
+  pendingConfirm = null;
+  $("#confirm-root").innerHTML = "";
+  confirmReturn?.focus?.();
+  if (resolve) resolve(answer);
+}
+
+let previousView = null;
+
+let restoringNavigation = false;
+
+const routePages = [
+  "dashboard",
+  "workshops",
+  "mine",
+  "reports",
+  "notifications",
+  "my-complaints",
+  "manage",
+  "approvals",
+  "participants",
+  "archive",
+  "complaints",
+];
+
+const requestedPage = () => {
+  const [page, query = ""] = (window.location?.hash || "").slice(1).split("?");
+  if (page === "archive") {
+    const params = new URLSearchParams(query);
+    state.archiveYear = Number(params.get("year")) || null;
+    const month = Number(params.get("month"));
+    state.archiveMonth = month >= 1 && month <= 12 ? String(month) : "all";
+    state.archiveWorkshop = params.get("workshop") || null;
+    state.archiveParticipantQuery = "";
+    state.archiveParticipantStatus = "all";
+    state.archiveParticipantPage = 1;
+  }
+  return routePages.includes(page) ? page : "dashboard";
+};
+
+const dateRangePicker = createDateRangePicker({
+  esc,
+  getRange: () => [state.dateFrom || "", state.dateTo || ""],
+  onChange(from, to) {
+    state.dateFrom = from;
+    state.dateTo = to;
+    render();
+  },
+});
+
+const viewContext = {
+  state,
+  store,
+  badge,
+  closeModal,
+  commit,
+  esc,
+  dateRangeField: dateRangePicker.field,
+  fmt,
+  hoursOf,
+  input,
+  issues,
+  member,
+  number,
+  occupancy,
+  openModal,
+  phase,
+  phaseLabel,
+  scheduledPhase,
+  staff,
+  toast,
+  uid,
+  user,
+  get managedWorkshops() {
+    return managedWorkshops;
+  },
+  get syncMessage() {
+    return syncMessage;
+  },
+  get apiSaveCount() {
+    return apiSaveCount;
+  },
+  $,
+  get complaints() {
+    return complaints;
+  },
+  get empty() {
+    return empty;
+  },
+  get title() {
+    return title;
+  },
+  get workshops() {
+    return workshops;
+  },
+};
+const {
+  home,
+  announcementDetail,
+  complaints,
+  empty,
+  enroll,
+  learnerDashboard,
+  myComplaints,
+  notifications,
+  notifyUser,
+  ratingModal,
+  readNotification,
+  replyModal,
+  reports,
+  supportModal,
+  title,
+  workshopDetail,
+  workshops,
+} = createActivityViews(viewContext);
+const {
+  approvalsV2,
+  archiveDate,
+  archiveDateLabel,
+  archiveHash,
+  archiveMonths,
+  archivePeriod,
+  archiveRegistrations,
+  archiveReplaceRoute,
+  archivedWorkshops,
+  attendanceStats,
+  closeWorkshopMenu,
+  deletedWorkshopDetail,
+  downloadCsv,
+  managedWorkshops,
+  openWorkshopMenu,
+  participantsV2,
+  staffDashboard,
+  workshopArchive,
+  workshopModal,
+} = createManagementViews(viewContext);
+const membershipUi = createMembershipViews({
+  $,
+  esc,
+  input,
+  user,
+  openModal,
+  closeModal,
+  apiRequest,
+  toast,
+  onAuthenticated: acceptSession,
+  onLoggedOut: showPublicHome,
+  onAccount(result) {
+    Object.assign(store, result.store);
+    render();
+  },
+});
+window.addEventListener?.("popstate", () => {
+  if (!user()) {
+    state.page = window.location?.hash === "#workshops" ? "workshops" : "home";
+    return render();
+  }
+  restoringNavigation = true;
+  state.page = requestedPage();
+  state.view = state.page === "mine" ? "mine" : "open";
+  render();
+  restoringNavigation = false;
+});
+
+function renderBootstrap() {
+  let screen = $(".app-bootstrap");
+  // Change only the status text so the logo animation stays steady.
+  if (!screen || screen.dataset.bootstrapError !== String(bootstrapError)) {
+    $("#app").innerHTML =
+      `<main class="app-bootstrap" data-bootstrap-error="${bootstrapError}">
+        <section class="app-bootstrap-content" ${bootstrapError ? 'role="alert"' : 'role="status" aria-live="polite" aria-busy="true"'}>
+          <div class="app-bootstrap-emblem" aria-hidden="true"><span class="app-bootstrap-orbit"></span><img class="app-bootstrap-logo" src="${LOGO}" alt="" width="90" height="92"></div>
+          <h1>${bootstrapError ? "ขอเวลาเชื่อมต่ออีกครั้ง" : "กำลังเตรียมพื้นที่การเรียนรู้"}</h1>
+          <p id="bootstrap-message"></p>
+          <div class="app-bootstrap-progress" aria-hidden="true"><span></span></div>
+          ${bootstrapError ? '<button class="btn primary app-bootstrap-retry" type="button" data-action="retry-bootstrap">ลองเชื่อมต่ออีกครั้ง <span aria-hidden="true">↗</span></button>' : ""}
+        </section>
+      </main>`;
+    screen = $(".app-bootstrap");
+  }
+  screen.dataset.bootstrapStage = bootstrapStage;
+  $("#bootstrap-message").textContent = bootstrapError
+    ? "ยังโหลดข้อมูลไม่ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง"
+    : "กำลังโหลดรายการเวิร์กช็อป";
+}
+
+function render() {
+  closeWorkshopMenu();
+  // Keep the neutral loading screen until the public catalogue is ready.
+  if (!ready) {
+    return renderBootstrap();
+  }
+  let content;
+  if (!user()) content = state.page === "workshops" ? workshops() : home();
+  else if (state.page === "dashboard")
+    content = staff() ? staffDashboard() : learnerDashboard();
+  else if (staff())
+    content = (
+      {
+        manage: workshops,
+        approvals: approvalsV2,
+        participants: participantsV2,
+        archive: workshopArchive,
+        complaints,
+      }[state.page] || learnerDashboard
+    )();
+  else if (state.page === "mine") {
+    state.view = "mine";
+    content = workshops();
+  } else
+    content = (
+      { workshops, reports, notifications, "my-complaints": myComplaints }[
+        state.page
+      ] || learnerDashboard
+    )();
+  const view = [
+    state.portal,
+    state.userId,
+    state.page,
+    state.page === "archive" ? state.archiveWorkshop || "list" : "",
+  ].join(":");
+  const changed = view !== previousView;
+  const hadView = previousView !== null;
+  $("#app").innerHTML = shell(content);
+
+  if (changed) {
+    $(".page-stage")?.classList.add("is-entering");
+    if (hadView) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+      $("#main-content")?.focus({ preventScroll: true });
+    }
+  }
+  if (changed && !restoringNavigation && window.history?.pushState) {
+    const hash =
+      state.page === "archive" && staff() ? archiveHash() : "#" + state.page;
+    if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  }
+  previousView = view;
+}
+
+function openModal(title, body) {
+  if (!$("#modal-root .dialog")) {
+    modalReturn = document.activeElement;
+    modalOverflow = document.body.style.overflow;
+  }
+  document.body.style.overflow = "hidden";
+  $("#modal-root").innerHTML =
+    `<div class="dialog-back"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" tabindex="-1"><div class="top"><h2 id="dialog-title">${title}</h2><button class="close" data-action="close" aria-label="ปิดหน้าต่าง">✕</button></div>${body}</section></div>`;
+  $("#modal-root input, #modal-root select, #modal-root button")?.focus();
+}
+
+function closeModal() {
+  $("#modal-root").innerHTML = "";
+  document.body.style.overflow = modalOverflow || "";
+  if (modalReturn?.isConnected) modalReturn.focus();
+  else $("#app button")?.focus();
+}
+
+function confirmModal(msg, action, id) {
+  openModal(
+    "ยืนยันการดำเนินการ",
+    `<p>${esc(msg)}</p><div class="row" style="justify-content:flex-end"><button class="btn" data-action="close">ไม่ใช่</button><button class="btn primary" data-action="${action}" data-id="${id}">ใช่</button></div>`,
+  );
+}
+
+const validContact = (c) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c) || /^0\d{8,9}$/.test(c);
+
+const normalize = (c) => c.trim().toLowerCase();
+
+document.addEventListener("focusin", (e) => {
+  if (!e.target.closest(".account-menu"))
+    if (
+      !e.target.closest('#workshop-actions-menu, [data-action="workshop-menu"]')
+    )
+      closeWorkshopMenu();
+});
+
+window.addEventListener?.("resize", () => closeWorkshopMenu());
+
+document.addEventListener(
+  "scroll",
+  (e) => {
+    if (!e.target.closest?.("#workshop-actions-menu")) closeWorkshopMenu();
+  },
+  true,
+);
+
+document.addEventListener("click", async (e) => {
+  if (dateRangePicker.click(e)) return;
+  if (!e.target.closest(".account-menu"))
+    if (
+      !e.target.closest('#workshop-actions-menu, [data-action="workshop-menu"]')
+    )
+      closeWorkshopMenu();
+  const b = e.target.closest("[data-action]");
+  if (!b || b.disabled) return;
+  if (b.tagName === "A") e.preventDefault();
+  let a = b.dataset.action;
+  if (membershipUi.isAction(a)) {
+    await membershipUi.handleAction(a, b);
+    return;
+  }
+  if (a === "public-page") {
+    state.page = b.dataset.id === "workshops" ? "workshops" : "home";
+    state.view = "open";
+    state.search = "";
+    state.filter = "all";
+    return render();
+  }
+  if (a === "announcement") return announcementDetail(b.dataset.id);
+  if (!user() && !["workshop-detail", "close", "retry-bootstrap"].includes(a))
+    return;
+  const id = b.dataset.id;
+  if (a === "answer-yes" || a === "answer-no")
+    return finishConfirm(a === "answer-yes");
+  if (pendingConfirm) return;
+  if (staff() && a === "attendance-pending") {
+    state.participantWorkshop = id;
+    state.page = "participants";
+    state.participantQuery = "";
+    state.participantStatus = "PENDING";
+    return render();
+  }
+  if (staff() && a === "finalize-attendance") {
+    if (apiSaveCount) return toast("กำลังบันทึกผล กรุณารอสักครู่");
+    const w = store.workshops.find((w) => w.id === id);
+    if (!w || w.attendanceFinalizedAt || +archiveDate(w.end) > Date.now())
+      return;
+    if (attendanceStats(w).pending)
+      return toast("กรุณาบันทึกผลเข้าร่วมหรือไม่เข้าร่วมให้ครบทุกคนก่อน");
+    if (
+      !(await askConfirm(
+        `ยืนยันผล “${w.title}” และเก็บเข้าประวัติหรือไม่? หลังยืนยันแล้วจะเป็นแบบอ่านอย่างเดียว`,
+      ))
+    )
+      return;
+    if (!staff() || apiSaveCount) return;
+    const actor = state.userId,
+      epoch = apiSaveEpoch;
+    apiSaveCount++;
+    render();
+    try {
+      const result = await apiRequest("/api/workshops/finalize-attendance", {
+        method: "POST",
+        body: JSON.stringify({ workshopId: id, revision: store.revision }),
+      });
+      if (actor !== state.userId || epoch !== apiSaveEpoch) return;
+      Object.assign(store, result.store);
+      state.archiveWorkshop = id;
+      state.archiveYear = archivePeriod(w).year;
+      state.archiveMonth = String(archivePeriod(w).month);
+      state.archiveParticipantQuery = "";
+      state.archiveParticipantStatus = "all";
+      state.archiveParticipantPage = 1;
+      state.page = "archive";
+      toast("ยืนยันผลและเก็บเข้าประวัติแล้ว");
+    } catch (error) {
+      if (actor !== state.userId || epoch !== apiSaveEpoch) return;
+      toast(error.message);
+      if (error.status === 409) {
+        const latest = await apiRequest("/api/store").catch(() => null);
+        if (latest && actor === state.userId && epoch === apiSaveEpoch) {
+          Object.assign(store, latest.store);
+        }
+      }
+    } finally {
+      apiSaveCount--;
+      if (actor === state.userId && epoch === apiSaveEpoch) render();
+    }
+    return;
+  }
+  if (staff() && state.page === "archive" && a.startsWith("archive-")) {
+    const w = archivedWorkshops().find(
+      (w) => w.id === (id || state.archiveWorkshop),
+    );
+    if (a === "archive-roster" && w) {
+      state.archiveWorkshop = w.id;
+      state.archiveParticipantQuery = "";
+      state.archiveParticipantStatus = "all";
+      state.archiveParticipantPage = 1;
+      return render();
+    }
+    if (a === "archive-back") {
+      state.archiveWorkshop = null;
+      return render();
+    }
+    if (a === "archive-detail" && w)
+      return openModal(
+        esc(w.title),
+        `<p class="activity-description">${esc(w.description || "ยังไม่มีรายละเอียดเพิ่มเติม")}</p><p>${esc(archiveDateLabel(w.start))} – ${esc(archiveDateLabel(w.end))}</p><p class="muted">${esc(w.place || "ไม่ระบุสถานที่")} · ${number(w.hours || 0)} ชั่วโมง</p><button class="btn" data-action="close">ปิดรายละเอียด</button>`,
+      );
+    if (a === "archive-page") {
+      state[state.archiveWorkshop ? "archiveParticipantPage" : "archivePage"] =
+        Math.max(1, Number(id) || 1);
+      render();
+      document
+        .querySelector(".archive-view table")
+        ?.scrollIntoView?.({ block: "start", behavior: "auto" });
+      document.querySelector(".archive-view h1")?.focus?.();
+      return;
+    }
+    if (a === "archive-clear") {
+      state.archiveMonth = "all";
+      state.archiveQuery = "";
+      state.archivePage = 1;
+      render();
+      return archiveReplaceRoute();
+    }
+    if (a === "archive-export" && w) {
+      // Keep spreadsheet formulas inert even if a member's display name starts with '='.
+      const safe = (value) =>
+        /^[\s]*[=+@-]/.test(String(value || "")) ? "'" + value : value;
+      const period = archivePeriod(w);
+      return downloadCsv(
+        `bsru-archive-${period.year + 543}-${String(period.month).padStart(2, "0")}-${w.id.replace(/[^a-zA-Z0-9_-]/g, "")}.csv`,
+        [
+          [
+            "ชื่อ–นามสกุล",
+            "รหัสประจำตัว",
+            "อีเมล",
+            "เวิร์กช็อป",
+            "วันที่เริ่มกิจกรรม",
+            "ปี พ.ศ.",
+            "เดือนที่จัดกิจกรรม",
+            "สถานะการเข้าร่วม",
+          ],
+          ...archiveRegistrations(w.id).map((r) => {
+            const u = store.users.find((u) => u.id === r.userId);
+            return [
+              u?.name || "ไม่พบข้อมูลผู้ใช้งาน",
+              u?.code || "",
+              u?.email || "",
+              w.title,
+              archiveDateLabel(w.start),
+              period.year + 543,
+              archiveMonths[period.month - 1],
+              labels[r.status] || r.status,
+            ].map(safe);
+          }),
+        ],
+      );
+    }
+    return;
+  }
+  if (b.closest("#workshop-actions-menu")) closeWorkshopMenu(true);
+  if (staff() && a === "workshop-menu") return openWorkshopMenu(b);
+  if (staff() && state.page === "manage") {
+    if (a === "manage-view") {
+      state.manageView = id === "deleted" ? "deleted" : "current";
+      state.filter = "all";
+      state.search = "";
+      state.dateFrom = "";
+      state.dateTo = "";
+      state.managePage = 1;
+      state.manageSort = "priority";
+      render();
+      $(`[data-action="manage-view"][data-id="${state.manageView}"]`)?.focus();
+      return;
+    }
+    if (a === "manage-page") {
+      state.managePage = Math.max(1, Number(id) || 1);
+      render();
+      $("#manage-results")?.focus({ preventScroll: true });
+      $("#manage-results")?.scrollIntoView?.({
+        block: "start",
+        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")
+          .matches
+          ? "auto"
+          : "smooth",
+      });
+      return;
+    }
+    if (a === "reset-manage-filters" || a === "clear-manage-dates") {
+      state.dateFrom = "";
+      state.dateTo = "";
+      state.managePage = 1;
+      if (a === "reset-manage-filters") {
+        state.search = "";
+        state.filter = "all";
+      }
+      return render();
+    }
+  }
+  if (a === "retry-bootstrap") return initializeLocalApp();
+  if (a === "toggle-account-menu") {
+    const dropdown = $("#account-dropdown");
+    dropdown.hidden = !dropdown.hidden;
+    b.setAttribute("aria-expanded", String(!dropdown.hidden));
+    return;
+  }
+  if (b.closest("#account-dropdown"))
+    if (a === "notification-go") {
+      closeModal();
+      state.page = id === "my-complaints" ? "my-complaints" : "reports";
+      return render();
+    }
+  if (a === "notification-read") return readNotification(id);
+  if (a === "notification-filter" && member()) {
+    state.notificationFilter = ["general", "activity"].includes(id)
+      ? id
+      : "general";
+    return render();
+  }
+  if (a === "clear-notification-search") {
+    state.notificationQuery = "";
+    return render();
+  }
+  if (a === "export-participants" && staff()) {
+    const query = state.participantQuery.toLowerCase();
+    const rows = store.registrations
+      .filter((r) => {
+        const u = store.users.find((x) => x.id === r.userId);
+        return (
+          (state.participantWorkshop === "all" ||
+            r.workshopId === state.participantWorkshop) &&
+          (state.participantStatus === "all" ||
+            r.status === state.participantStatus) &&
+          (!query ||
+            `${u?.name || ""} ${u?.code || ""} ${u?.email || ""}`
+              .toLowerCase()
+              .includes(query))
+        );
+      })
+      .map((r) => {
+        const u = store.users.find((x) => x.id === r.userId);
+        const w = store.workshops.find((x) => x.id === r.workshopId);
+        return [
+          u?.name || "",
+          u?.code || "",
+          u?.email || "",
+          w?.title || "",
+          labels[r.status] || r.status,
+        ];
+      });
+    downloadCsv("bsru-participants.csv", [
+      ["ชื่อ", "รหัสประจำตัว", "อีเมล", "เวิร์กช็อป", "สถานะ"],
+      ...rows,
+    ]);
+    return;
+  }
+
+  if (a === "notification-go" && member()) {
+    closeModal();
+    state.page = id;
+    return render();
+  }
+  if (a === "reply-open") return replyModal(id);
+  if (["logout", "switch", "approve", "attend", "absent"].includes(a)) {
+    if (["approve", "attend", "absent"].includes(a) && !staff()) return;
+    if (["logout", "switch"].includes(a) && !user()) {
+    } else
+      return confirmModal(
+        {
+          logout: "ต้องการออกจากระบบจริงใช่ไหม?",
+          switch:
+            "ต้องการออกจากบัญชีนี้เพื่อเข้าสู่ระบบด้วยบัญชีอื่นใช่หรือไม่?",
+          approve: "ต้องการอนุมัติสิทธิ์ผู้ใช้งานนี้จริงใช่ไหม?",
+          attend:
+            "ต้องการยืนยันว่าผู้ใช้นี้เข้าร่วมงานและบันทึกชั่วโมงอบรมจริงใช่ไหม?",
+          absent:
+            "ต้องการบันทึกว่าผู้ใช้นี้ไม่ได้เข้าร่วมงานจริงใช่ไหม? ชั่วโมงของรายการนี้จะไม่นับรวม",
+        }[a],
+        "confirmed-" + a,
+        id || "",
+      );
+  }
+  if (a.startsWith("confirmed-")) {
+    const next = a.slice(10);
+    if (!["logout", "switch", "approve", "attend", "absent"].includes(next))
+      return;
+    a = next;
+    closeModal();
+  }
+
+  if (a === "close") {
+    return closeModal();
+  }
+
+  if (a === "workshop-detail") return workshopDetail(id);
+  if (a === "page") {
+    state.page = id;
+    if (id === "archive") state.archiveWorkshop = null;
+    state.view = id === "mine" ? "mine" : "open";
+    state.search = "";
+    state.filter = "all";
+    state.dateFrom = "";
+    state.dateTo = "";
+    state.managePage = 1;
+    state.manageView = "current";
+    if (id === "notifications") {
+      state.notificationFilter = "general";
+      state.notificationQuery = "";
+    }
+    return render();
+  }
+
+  if (a === "support" && member()) return supportModal();
+
+  if (a === "slide") {
+    state.slide =
+      id === "prev"
+        ? (state.slide - 1 + store.workshops.length) % store.workshops.length
+        : id === "next"
+          ? (state.slide + 1) % store.workshops.length
+          : Number(id);
+    return render();
+  }
+  if (a === "promo-slide") {
+    const total = promotionItems().length;
+    state.promoSlide =
+      id === "prev"
+        ? (state.promoSlide - 1 + total) % total
+        : id === "next"
+          ? (state.promoSlide + 1) % total
+          : Number(id);
+    return render();
+  }
+  if (a === "dashboard-month-info" && staff())
+    return toast(
+      `${b.dataset.label}: ${number(Number(b.dataset.count))} รายการลงทะเบียน`,
+    );
+  if (a === "view") {
+    state.view = id;
+    state.page = id === "mine" ? "mine" : "workshops";
+    return render();
+  }
+  if (a === "rate-open" && member()) return ratingModal(id);
+  if (a === "rate" && member()) {
+    if (!(await askConfirm("ต้องการส่งคะแนนประเมินนี้จริงใช่ไหม?"))) return;
+    const r = store.registrations.find(
+        (r) => r.id === id && r.userId === state.userId,
+      ),
+      score = Number(b.dataset.score);
+    if (!r || !Number.isInteger(score) || score < 1 || score > 5) return;
+    const old = store.ratings.find(
+      (x) => x.registrationId === r.id || x.eventId === r.ratingEvent,
+    );
+    if (old) {
+      old.score = score;
+      old.eventId = r.id;
+      old.registrationId = r.id;
+    } else
+      store.ratings.push({
+        id: uid(),
+        eventId: r.id,
+        userId: state.userId,
+        registrationId: id,
+        workshopId: r.workshopId,
+        score,
+        createdAt: new Date().toISOString(),
+      });
+    closeModal();
+    return commit("ขอบคุณสำหรับการประเมินความรู้สึกหลังใช้งาน");
+  }
+  if (a === "enroll" && member()) {
+    const r = store.registrations.find(
+      (r) => r.userId === state.userId && r.workshopId === id,
+    );
+    return confirmModal(
+      r
+        ? "ต้องการลงทะเบียนเวิร์กช็อปนี้อีกครั้งหรือไม่?"
+        : "ยืนยันการลงทะเบียนเวิร์กช็อปนี้หรือไม่?",
+      "confirm-enroll",
+      id,
+    );
+  }
+  if (a === "confirm-enroll") return enroll(id);
+  if (a === "cancel" && member())
+    return confirmModal(
+      "ต้องการยกเลิกการลงทะเบียนนี้หรือไม่?",
+      "confirm-cancel",
+      id,
+    );
+  if (a === "confirm-cancel" && member()) {
+    const r = store.registrations.find(
+      (r) => r.id === id && r.userId === state.userId,
+    );
+    if (r?.status !== "PENDING")
+      return toast("สถานะเปลี่ยนแล้ว กรุณาตรวจสอบอีกครั้ง");
+    r.status = "CANCELLED";
+    r.updatedAt = new Date().toISOString();
+    closeModal();
+    return commit("ยกเลิกการลงทะเบียนแล้ว");
+  }
+  if (!staff()) return;
+  if (a === "deleted-workshop-detail") return deletedWorkshopDetail(id);
+  if (a === "delete-workshop") {
+    const w = store.workshops.find((w) => w.id === id);
+    if (!w) return toast("ไม่พบเวิร์กช็อป");
+    openModal(
+      "ลบเวิร์กช็อป",
+      `<p>ต้องการลบเวิร์กช็อป “${esc(w.title)}” หรือไม่?</p><p class="notice">รายชื่อผู้ลงทะเบียน ผลประเมิน และชั่วโมงอบรมของกิจกรรมนี้จะถูกลบถาวร และไม่สามารถกู้คืนได้</p><p class="sub">ระบบจะเก็บชื่อกิจกรรม วันจัด และผู้ลบไว้ใน “กิจกรรมที่ลบไปแล้ว” สำหรับแอดมิน</p><div class="row" style="justify-content:flex-end"><button class="btn" data-action="close">ยกเลิก</button><button class="btn danger" data-action="confirm-delete-workshop" data-id="${esc(id)}">ยืนยันลบ</button></div>`,
+    );
+    return;
+  }
+  if (a === "confirm-delete-workshop") {
+    if (b.disabled) return;
+    const buttons = [...document.querySelectorAll("#modal-root button")];
+    buttons.forEach((button) => (button.disabled = true));
+    b.textContent = "กำลังลบ…";
+    const actor = state.userId,
+      epoch = apiSaveEpoch;
+    apiSaveCount++;
+    try {
+      await apiSaving;
+      if (actor !== state.userId || epoch !== apiSaveEpoch) return;
+      updateSync("กำลังลบเวิร์กช็อป…");
+      const result = await apiRequest("/api/workshops/delete", {
+        method: "POST",
+        body: JSON.stringify({ workshopId: id, revision: store.revision }),
+      });
+      if (actor !== state.userId || epoch !== apiSaveEpoch) return;
+      Object.assign(store, result.store);
+      closeModal();
+      render();
+      updateSync("บันทึกแล้ว");
+      toast("ลบเวิร์กช็อปแล้ว");
+    } catch (error) {
+      if (actor !== state.userId || epoch !== apiSaveEpoch) return;
+      updateSync("ลบไม่สำเร็จ");
+      toast(error.message);
+      if (error.status === 409) {
+        const latest = await apiRequest("/api/store").catch(() => null);
+        if (latest && actor === state.userId && epoch === apiSaveEpoch) {
+          Object.assign(store, latest.store);
+          closeModal();
+          render();
+        }
+      }
+    } finally {
+      apiSaveCount--;
+      buttons.forEach((button) => (button.disabled = false));
+      b.textContent = "ยืนยันลบ";
+    }
+    return;
+  }
+  if (a === "close-workshop") {
+    const w = store.workshops.find((w) => w.id === id);
+    if (!w || w.closed || scheduledPhase(w) === "finished")
+      return toast("ไม่สามารถปิดเวิร์กช็อปที่เสร็จสิ้นหรือปิดไปแล้ว");
+    return confirmModal(
+      "ปิดเวิร์กช็อปนี้หรือไม่? จะหยุดรับลงทะเบียนใหม่ และคงรายชื่อกับชั่วโมงที่ยืนยันไว้เดิม",
+      "confirm-close-workshop",
+      id,
+    );
+  }
+  if (a === "confirm-close-workshop") {
+    const w = store.workshops.find((w) => w.id === id);
+    if (!w || w.closed || scheduledPhase(w) === "finished")
+      return toast("ไม่สามารถปิดเวิร์กช็อปที่เสร็จสิ้นหรือปิดไปแล้ว");
+    w.closed = true;
+    w.closedAt = new Date().toISOString();
+
+    closeModal();
+    return commit("ปิดเวิร์กช็อปแล้ว ฝั่งผู้ใช้ไม่สามารถลงทะเบียนเพิ่มได้");
+  }
+  if (a === "add-workshop") return workshopModal();
+  if (a === "edit-workshop") {
+    if (store.workshops.find((w) => w.id === id)?.attendanceFinalizedAt)
+      return toast("กิจกรรมนี้ยืนยันผลแล้ว ไม่สามารถแก้ไขได้");
+    return workshopModal(id);
+  }
+  if (a === "participants-for") {
+    state.participantWorkshop = id;
+    state.page = "participants";
+    state.participantQuery = "";
+    state.participantStatus = "all";
+    return render();
+  }
+
+  if (a === "approve") {
+    const u = store.users.find((u) => u.id === id && u.role === "user");
+    if (u?.status === "WAITING") {
+      u.status = "APPROVED";
+
+      notifyUser(
+        u.id,
+        "บัญชีของคุณได้รับอนุมัติแล้ว",
+        "คุณสามารถเข้าสู่ระบบและลงทะเบียนเวิร์กช็อปได้แล้ว",
+        "account",
+        u.id,
+      );
+      commit("อนุมัติแล้ว ผู้ใช้เข้าสู่ระบบได้ทันที");
+    }
+    return;
+  }
+
+  const r = store.registrations.find((r) => r.id === id);
+  if (!r || r.status === "CANCELLED") return;
+  if (store.workshops.find((w) => w.id === r.workshopId)?.attendanceFinalizedAt)
+    return toast("กิจกรรมนี้ยืนยันผลแล้ว ไม่สามารถแก้ไขผลได้");
+  const previous = r.status;
+  if (
+    ["ATTENDED", "ABSENT"].includes(previous) &&
+    ((a === "attend" && previous !== "ATTENDED") ||
+      (a === "absent" && previous !== "ABSENT"))
+  ) {
+    if (
+      !(await askConfirm(
+        "เปลี่ยนผลการเข้าร่วมที่บันทึกไว้แล้วหรือไม่? ชั่วโมงสะสมจะเปลี่ยนตามผลใหม่",
+      ))
+    )
+      return;
+    if (r.status !== previous || !staff()) return;
+  }
+  if (a === "attend") r.status = "ATTENDED";
+  else if (a === "absent") r.status = "ABSENT";
+  else return;
+  if (previous !== r.status) {
+    const w = store.workshops.find((w) => w.id === r.workshopId);
+    notifyUser(
+      r.userId,
+      a === "attend" ? "ยืนยันการเข้าร่วมงานแล้ว" : "อัปเดตสถานะการเข้าร่วมงาน",
+      `${w.title} · ${labels[r.status]} · ชั่วโมงที่ได้รับ ${number(hoursOf(r))} ชั่วโมง`,
+      "attendance",
+      r.id,
+    );
+  }
+  r.updatedAt = new Date().toISOString();
+
+  commit("อัปเดตสถานะและชั่วโมงอบรมของผู้ใช้งานแล้ว");
+});
+
+document.addEventListener(
+  "toggle",
+  (e) => {
+    if (e.target.id === "staff-upcoming-details")
+      state.dashboardAgendaOpen = e.target.open;
+  },
+  true,
+);
+
+document.addEventListener("change", (e) => {
+  if (dateRangePicker.change(e)) return;
+  if (e.target.id === "mine-status") {
+    state.mineStatus = e.target.value;
+    render();
+    $("#mine-status")?.focus();
+    return;
+  }
+  if (e.target.id === "dashboard-period" && staff()) {
+    state.dashboardMonths = Number(e.target.value) === 12 ? 12 : 6;
+    render();
+    $("#dashboard-period")?.focus();
+    return;
+  }
+  if (staff() && state.page === "archive") {
+    if (e.target.id === "archive-year") {
+      state.archiveYear = Number(e.target.value);
+      state.archiveMonth = "all";
+      state.archivePage = 1;
+      render();
+      return archiveReplaceRoute();
+    }
+    if (e.target.id === "archive-month") {
+      state.archiveMonth = e.target.value;
+      state.archivePage = 1;
+      render();
+      return archiveReplaceRoute();
+    }
+    if (e.target.id === "archive-participant-status") {
+      state.archiveParticipantStatus = e.target.value;
+      state.archiveParticipantPage = 1;
+      return render();
+    }
+  }
+  if (["date-from", "date-to"].includes(e.target.id)) {
+    state[e.target.id === "date-from" ? "dateFrom" : "dateTo"] = e.target.value;
+    state.managePage = 1;
+    render();
+  }
+  if (e.target.id === "phase-filter") {
+    state.filter = e.target.value;
+    state.managePage = 1;
+    render();
+  }
+  if (e.target.id === "manage-sort" && staff()) {
+    state.manageSort = ["priority", "newest", "oldest"].includes(e.target.value)
+      ? e.target.value
+      : "priority";
+    state.managePage = 1;
+    render();
+  }
+  if (e.target.id === "manage-page-size" && staff()) {
+    const size = Number(e.target.value);
+    state.managePageSize = [10, 25, 50].includes(size) ? size : 10;
+    state.managePage = 1;
+    render();
+  }
+  if (e.target.id === "participant-filter") {
+    state.participantWorkshop = e.target.value;
+    render();
+  }
+
+  if (e.target.id === "approval-status") {
+    state.approvalStatus = e.target.value;
+    render();
+  }
+  if (e.target.id === "participant-status") {
+    state.participantStatus = e.target.value;
+    render();
+  }
+});
+
+document.addEventListener("input", (e) => {
+  if (
+    staff() &&
+    state.page === "archive" &&
+    ["archive-search", "archive-participant-search"].includes(e.target.id)
+  ) {
+    const field = e.target.id;
+    const pos = e.target.selectionStart;
+    state[
+      field === "archive-search" ? "archiveQuery" : "archiveParticipantQuery"
+    ] = e.target.value;
+    state[
+      field === "archive-search" ? "archivePage" : "archiveParticipantPage"
+    ] = 1;
+    render();
+    document.getElementById(field)?.focus();
+    document.getElementById(field)?.setSelectionRange?.(pos, pos);
+    return;
+  }
+  if (e.target.id === "search") {
+    const pos = e.target.selectionStart;
+    state.search = e.target.value;
+    state.managePage = 1;
+    render();
+    $("#search").focus();
+    $("#search").setSelectionRange?.(pos, pos);
+  }
+  if (e.target.id === "notification-search") {
+    const pos = e.target.selectionStart;
+    state.notificationQuery = e.target.value;
+    render();
+    const search = $("#notification-search");
+    search?.focus();
+    search?.setSelectionRange(pos, pos);
+  }
+  if (e.target.id === "approval-search") {
+    const pos = e.target.selectionStart;
+    state.approvalQuery = e.target.value;
+    render();
+    $("#approval-search")?.focus();
+    $("#approval-search")?.setSelectionRange?.(pos, pos);
+  }
+  if (e.target.id === "participant-search") {
+    const pos = e.target.selectionStart;
+    state.participantQuery = e.target.value;
+    render();
+    $("#participant-search")?.focus();
+    $("#participant-search")?.setSelectionRange?.(pos, pos);
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (dateRangePicker.keydown(e)) return;
+  const workshopMenu = $("#workshop-actions-menu");
+  if (workshopMenu) {
+    if (e.key === "Escape" || e.key === "Tab") {
+      if (e.key === "Escape") e.preventDefault();
+      closeWorkshopMenu(true);
+      return;
+    }
+    if (
+      ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) &&
+      e.target.closest?.("#workshop-actions-menu")
+    ) {
+      e.preventDefault();
+      const items = [...workshopMenu.querySelectorAll("button")];
+      const index = items.indexOf(e.target);
+      const next =
+        e.key === "Home"
+          ? 0
+          : e.key === "End"
+            ? items.length - 1
+            : (index + (e.key === "ArrowUp" ? -1 : 1) + items.length) %
+              items.length;
+      items[next]?.focus();
+      return;
+    }
+  }
+  const dropdown = $("#account-dropdown");
+  const trigger = e.target.closest?.('[data-action="toggle-account-menu"]');
+  if (dropdown && (trigger || !dropdown.hidden)) {
+    if (e.key === "Escape" && !dropdown.hidden) {
+      e.preventDefault();
+      membershipUi.closeAccountMenu(true);
+      return;
+    }
+    if (
+      ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) &&
+      e.target.closest?.(".account-menu")
+    ) {
+      e.preventDefault();
+      dropdown.hidden = false;
+      $('[data-action="toggle-account-menu"]').setAttribute(
+        "aria-expanded",
+        "true",
+      );
+      const items = [...dropdown.querySelectorAll("button")];
+      const index = items.indexOf(e.target);
+      const next =
+        e.key === "Home"
+          ? 0
+          : e.key === "End"
+            ? items.length - 1
+            : e.key === "ArrowUp"
+              ? index < 0
+                ? items.length - 1
+                : (index - 1 + items.length) % items.length
+              : (index + 1) % items.length;
+      items[next]?.focus();
+      return;
+    }
+  }
+  if (pendingConfirm) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      finishConfirm(false);
+    } else if (e.key === "Tab") {
+      const no = $('#confirm-root [data-action="answer-no"]'),
+        yes = $('#confirm-root [data-action="answer-yes"]');
+      e.preventDefault();
+      (document.activeElement === no ? yes : no)?.focus();
+    }
+    return;
+  }
+  const dialog = $(".dialog");
+  if (!dialog) return;
+  if (e.key === "Escape") {
+    closeModal();
+    return;
+  }
+  if (e.key === "Tab") {
+    const f = [
+      ...dialog.querySelectorAll("button,input,select,textarea"),
+    ].filter((x) => !x.disabled);
+    if (e.shiftKey && document.activeElement === f[0]) {
+      e.preventDefault();
+      f.at(-1).focus();
+    } else if (!e.shiftKey && document.activeElement === f.at(-1)) {
+      e.preventDefault();
+      f[0].focus();
+    }
+  }
+});
+
+document.addEventListener("submit", async (e) => {
+  const f = e.target;
+  if (
+    !["support-form", "workshop-form", "reply-form", "reject-form"].includes(
+      f.id,
+    )
+  )
+    return;
+  e.preventDefault();
+  if (!user()) return;
+  const formData = new FormData(f),
+    d = Object.fromEntries(formData);
+  for (const k of Object.keys(d))
+    if (typeof d[k] === "string") d[k] = d[k].trim();
+  const submit = f.querySelector('button[type="submit"],button:not([type])');
+  if (submit) submit.disabled = true;
+  const err = f.querySelector(".error");
+  if (err) err.textContent = "";
+  const portalAtSubmit = state.portal,
+    actorAtSubmit = state.userId;
+  try {
+    if (f.id === "reject-form") {
+      if (!staff() || !d.reason || d.reason.length > 500)
+        throw Error("กรุณาระบุเหตุผลการปฏิเสธไม่เกิน 500 ตัวอักษร");
+      const target = store.users.find(
+        (u) => u.id === f.dataset.id && u.role === "user",
+      );
+      if (!target || target.status !== "WAITING")
+        throw Error("ผู้สมัครรายการนี้เปลี่ยนสถานะแล้ว");
+      if (!(await askConfirm("ยืนยันการปฏิเสธผู้สมัครรายนี้ใช่หรือไม่?")))
+        return;
+      target.status = "REJECTED";
+
+      notifyUser(
+        target.id,
+        "บัญชีผู้ใช้ยังไม่ได้รับการอนุมัติ",
+        `เหตุผล: ${d.reason}`,
+        "account",
+        target.id,
+      );
+      closeModal();
+      commit("ปฏิเสธผู้ใช้งานและบันทึกเหตุผลแล้ว");
+    }
+
+    if (f.id === "reply-form") {
+      if (!staff()) throw Error("เฉพาะเจ้าหน้าที่เท่านั้น");
+      const c = store.complaints.find((c) => c.id === f.dataset.id);
+      if (
+        !c ||
+        !d.reply ||
+        d.reply.length > 3000 ||
+        !["REPLIED", "CLOSED"].includes(d.status)
+      )
+        throw Error("กรุณากรอกข้อความตอบกลับและเลือกสถานะให้ถูกต้อง");
+      if (
+        !(await askConfirm("ต้องการส่งคำตอบนี้กลับไปยังผู้ใช้งานจริงใช่ไหม?"))
+      )
+        return;
+      if (!staff() || state.userId !== actorAtSubmit || !f.isConnected) return;
+      const reply = {
+        id: uid(),
+        text: d.reply,
+        staffName: user().name,
+        staffId: state.userId,
+        createdAt: new Date().toISOString(),
+      };
+      (c.replies ||= []).push(reply);
+      c.status = d.status;
+      c.updatedAt = reply.createdAt;
+
+      notifyUser(
+        c.userId,
+        "เจ้าหน้าที่ตอบกลับคำร้องของคุณแล้ว",
+        c.issue + " · " + d.reply,
+        "complaint",
+        c.id,
+      );
+      closeModal();
+      commit("ส่งคำตอบแล้ว ผู้ใช้ได้รับแจ้งเตือนในแอป");
+    }
+
+    if (f.id === "support-form") {
+      if (!member()) throw Error("เฉพาะผู้ใช้งานที่เข้าสู่ระบบเท่านั้น");
+      if (
+        !issues.includes(d.issue) ||
+        !validContact(d.contact) ||
+        !d.name ||
+        !d.code
+      )
+        throw Error("กรุณากรอกข้อมูลให้ครบถ้วนและถูกต้อง");
+      if (
+        !(await askConfirm(
+          "ต้องการส่งเรื่องร้องเรียนนี้ถึงเจ้าหน้าที่จริงใช่ไหม?",
+        ))
+      )
+        return;
+      if (!member() || state.userId !== actorAtSubmit || !f.isConnected) return;
+      const complaint = {
+        id: uid(),
+        userId: state.userId,
+        issue: d.issue,
+        name: d.name,
+        type: d.type,
+        code: d.code,
+        contact: d.contact,
+        detail: d.detail,
+        replies: [],
+        status: "OPEN",
+        createdAt: new Date().toISOString(),
+      };
+      store.complaints.push(complaint);
+      notifyUser(
+        state.userId,
+        "ส่งคำร้องเรียนสำเร็จ",
+        `รับเรื่อง “${d.issue}” แล้ว รอเจ้าหน้าที่ตอบกลับ คุณสามารถติดตามคำตอบในคำร้องของฉัน`,
+        "complaint",
+        complaint.id,
+      );
+      closeModal();
+      commit("ส่งเรื่องถึงเจ้าหน้าที่แล้ว");
+    }
+    if (f.id === "workshop-form") {
+      if (!staff()) throw Error("กรุณาเข้าสู่ระบบเจ้าหน้าที่");
+      if (!d.title || !d.place) throw Error("กรุณากรอกชื่อกิจกรรมและสถานที่");
+      const elapsed = (new Date(d.end) - new Date(d.start)) / 3600000;
+      if (!Number.isFinite(elapsed) || elapsed <= 0)
+        throw Error("เวลาสิ้นสุดต้องอยู่หลังเวลาเริ่ม");
+      const capacity = Number(d.capacity),
+        hours = Number(d.hours);
+      if (!Number.isInteger(capacity) || capacity < 1 || capacity > 10000)
+        throw Error("จำนวนที่นั่งต้องเป็นจำนวนเต็ม 1–10,000");
+      if (
+        !Number.isFinite(hours) ||
+        hours < 0.5 ||
+        hours > 1000 ||
+        (hours * 2) % 1 !== 0 ||
+        hours > elapsed
+      )
+        throw Error(
+          "ชั่วโมงอบรมต้องเพิ่มทีละ 0.5 ชั่วโมง และไม่เกินช่วงเวลาเริ่ม–สิ้นสุด",
+        );
+      const existing = store.workshops.find((w) => w.id === f.dataset.id);
+      if (existing && capacity < occupancy(existing.id))
+        throw Error("จำนวนที่นั่งต้องไม่น้อยกว่าจำนวนผู้ลงทะเบียน");
+      let cover = existing?.cover || DEFAULT_WORKSHOP_COVER;
+      if (d.cover?.size) {
+        if (
+          d.cover.size > 3 * 1024 * 1024 ||
+          !["image/jpeg", "image/png", "image/webp"].includes(d.cover.type)
+        )
+          throw Error("ใช้รูป JPG, PNG หรือ WebP ขนาดไม่เกิน 3 MB");
+        cover = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(Error("อ่านรูปภาพไม่สำเร็จ"));
+          reader.readAsDataURL(d.cover);
+        });
+      }
+      if (!staff() || !f.isConnected)
+        throw Error("สิทธิ์เจ้าหน้าที่เปลี่ยนไป กรุณาเข้าสู่ระบบใหม่");
+      if (existing && capacity < occupancy(existing.id))
+        throw Error("จำนวนที่นั่งต้องไม่น้อยกว่าจำนวนผู้ลงทะเบียน");
+      if (
+        !(await askConfirm(
+          existing
+            ? "ต้องการบันทึกการแก้ไขเวิร์กช็อปนี้จริงใช่ไหม?"
+            : "ต้องการสร้างเวิร์กช็อปนี้จริงใช่ไหม?",
+        ))
+      )
+        return;
+      if (!staff() || state.userId !== actorAtSubmit || !f.isConnected) return;
+      const w = {
+        id: existing?.id || uid(),
+        title: d.title,
+        start: d.start,
+        end: d.end,
+        place: d.place,
+        capacity,
+        hours,
+        cover,
+        description: d.description,
+        category: "BSRU WORKSHOP",
+        icon: "fa-graduation-cap",
+        closed: existing?.closed || false,
+        photoSource: existing?.photoSource,
+      };
+      if (existing) Object.assign(existing, w);
+      else store.workshops.unshift(w);
+      closeModal();
+      commit("บันทึกแล้ว · เวิร์กช็อปและชั่วโมงอัปเดตในฝั่งผู้ใช้งานทันที");
+    }
+  } catch (error) {
+    if (err?.isConnected) err.textContent = error.message;
+    else toast(error.message);
+  } finally {
+    if (submit?.isConnected) submit.disabled = false;
+  }
+});
+
+async function initializeLocalApp() {
+  if (initializing) return;
+  initializing = true;
+  ready = false;
+  bootstrapError = false;
+  bootstrapStage = "catalog";
+  render();
+  try {
+    const [session, result] = await Promise.all([
+      apiRequest("/api/session"),
+      apiRequest("/api/workshops"),
+    ]);
+    membershipUi.configure(session);
+    store.workshops = result.workshops;
+    if (session.user) await acceptSession(session, true);
+    else {
+      state.userId = null;
+      state.portal = "user";
+      state.page =
+        window.location?.hash === "#workshops" ? "workshops" : "home";
+      state.view = "open";
+      ready = true;
+      render();
+    }
+  } catch (error) {
+    bootstrapError = true;
+    render();
+  } finally {
+    initializing = false;
+  }
+}
+
+async function acceptSession(session, restoreRoute = false) {
+  const epoch = ++apiSaveEpoch;
+  apiCsrf = session.csrf;
+  const latest = await apiRequest("/api/store");
+  if (epoch !== apiSaveEpoch) return;
+  Object.assign(store, latest.store);
+  state.userId = session.user.id;
+  state.portal = session.user.role;
+  state.page = restoreRoute ? requestedPage() : "dashboard";
+  state.view = state.page === "mine" ? "mine" : "open";
+  ready = true;
+  render();
+  startApiPolling();
+}
+
+async function showPublicHome() {
+  apiSaveEpoch++;
+  apiCsrf = null;
+  if (apiPollTimer) clearInterval(apiPollTimer);
+  apiPollTimer = null;
+  state.userId = null;
+  state.portal = "user";
+  state.page = "home";
+  state.view = "open";
+  for (const key of [
+    "users",
+    "registrations",
+    "complaints",
+    "ratings",
+    "notifications",
+    "auditLog",
+  ])
+    store[key] = [];
+  ready = true;
+  render();
+  try {
+    store.workshops = (await apiRequest("/api/workshops")).workshops;
+    render();
+  } catch {
+    toast("โหลดกิจกรรมล่าสุดไม่สำเร็จ กรุณาลองอีกครั้ง");
+  }
+}
+
+function startApiPolling() {
+  if (apiPollTimer) return;
+  apiPollTimer = setInterval(async () => {
+    if (
+      !apiCsrf ||
+      apiSaveCount ||
+      document.querySelector("#modal-root .dialog") ||
+      document.activeElement?.matches?.("input,textarea,select")
+    )
+      return;
+    const actor = state.userId;
+    try {
+      const latest = await apiRequest("/api/store");
+      if (actor !== state.userId || !apiCsrf) return;
+      if (latest.store.revision > store.revision) {
+        Object.assign(store, latest.store);
+        render();
+      }
+    } catch (error) {
+      if (error.status === 401) {
+        await showPublicHome();
+        toast("เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง");
+      } else updateSync("เชื่อมต่อขัดข้อง · กำลังลองใหม่");
+    }
+  }, 15000);
+}
+
+initializeLocalApp();
