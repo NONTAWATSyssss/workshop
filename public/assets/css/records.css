@@ -15,7 +15,7 @@
   padding: 22px 26px;
 }
 .record-summary > div:first-child {
-  background: #faf7fc;
+  background: var(--color-surface-solid);
 }
 .record-summary > div + div {
   border-inline-start: 1px solid var(--line);
@@ -28,7 +28,7 @@
   gap: 8px;
 }
 .record-summary dt i {
-  color: #a48bb4;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .record-summary dd {
@@ -43,7 +43,7 @@
   color: var(--purple);
 }
 .record-summary dd > span {
-  color: #786783;
+  color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 400;
   margin-inline-start: 8px;
@@ -53,14 +53,14 @@
   border: 1px solid var(--line);
   border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 6px 22px -18px #472a572b;
+  box-shadow: 0 6px 22px -18px rgb(var(--color-shadow-rgb) / 0.169);
 }
 .record-toolbar {
   display: grid;
   gap: 12px;
   align-items: end;
   padding: 20px;
-  border-bottom: 1px solid #f0ebf4;
+  border-bottom: 1px solid var(--color-border-soft);
 }
 .report-toolbar {
   grid-template-columns: minmax(0, 1fr) 150px 190px;
@@ -80,7 +80,7 @@
   inset-inline-start: 14px;
   top: 50%;
   transform: translateY(-50%);
-  color: #b0a1bc;
+  color: var(--color-text-muted);
   font-size: 13px;
   pointer-events: none;
 }
@@ -89,7 +89,7 @@
   padding-inline-start: 39px;
   font-size: 12px;
   border-radius: 11px;
-  background: #fcfbfd;
+  background: var(--color-surface-solid);
 }
 .record-filter {
   display: grid;
@@ -98,7 +98,7 @@
 }
 .record-filter > span {
   font-size: 10px;
-  color: #786783;
+  color: var(--color-text-muted);
 }
 .record-filter select {
   min-width: 0;
@@ -106,7 +106,7 @@
   height: 44px;
   font-size: 12px;
   border-radius: 11px;
-  background-color: #fcfbfd;
+  background-color: var(--color-surface-solid);
 }
 .record-section-heading {
   display: flex;
@@ -119,15 +119,15 @@
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #55445f;
+  color: var(--color-text-muted);
 }
 .record-section-heading h2 i {
   margin-inline-end: 6px;
-  color: #a087af;
+  color: var(--color-text-muted);
 }
 .record-section-heading > span {
   font-size: 11px;
-  color: #786783;
+  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .report-table {
@@ -138,8 +138,8 @@
 }
 .report-table th {
   padding: 12px 20px;
-  background: #faf8fc;
-  color: #786783;
+  background: var(--color-surface-solid);
+  color: var(--color-text-muted);
   font-size: 10px;
   font-weight: 400;
   border-bottom-color: var(--line);
@@ -164,8 +164,8 @@
 .report-table td {
   padding: 17px 20px;
   vertical-align: middle;
-  border-bottom-color: #f1ecf5;
-  color: #786783;
+  border-bottom-color: var(--color-border-soft);
+  color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }
 .report-table td:last-child {
@@ -178,7 +178,7 @@
   transition: background 0.15s ease;
 }
 .report-record-row:hover {
-  background: #fcf9fe;
+  background: var(--color-surface-solid);
 }
 .record-title {
   display: -webkit-box;
@@ -203,7 +203,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-top: 4px;
-  color: #786783;
+  color: var(--color-text-muted);
   font-size: 10px;
 }
 .report-table td.report-hours {
@@ -214,12 +214,12 @@
   font-variant-numeric: tabular-nums;
 }
 .report-hours small {
-  color: #786783;
+  color: var(--color-text-muted);
   font-size: 10px;
   font-weight: 400;
 }
 .record-dash {
-  color: #c6b9d0;
+  color: var(--color-text-muted);
   font-weight: 400;
 }
 .record-open,
@@ -229,7 +229,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  color: #aa97b7;
+  color: var(--color-text-muted);
   border: 1px solid transparent;
   background: transparent;
   border-radius: 10px;
@@ -237,9 +237,9 @@
 }
 .record-open:hover,
 .record-row-action:hover {
-  background: #f3eaf9;
+  background: var(--color-surface-soft);
   color: var(--purple);
-  border-color: #e9dcf1;
+  border-color: var(--color-border-soft);
 }
 .record-row-trash:hover {
   background: #fff3f5;
@@ -255,8 +255,8 @@
   font-size: 10px;
   font-weight: 400;
   white-space: nowrap;
-  color: #8b7b98;
-  background: #f5f1f8;
+  color: var(--color-text-muted);
+  background: var(--color-surface-solid);
 }
 .record-status > span {
   width: 5px;
@@ -281,8 +281,8 @@
 }
 .record-status.status-cancelled,
 .record-status.status-closed {
-  color: #786783;
-  background: #f3eff6;
+  color: var(--color-text-muted);
+  background: var(--color-surface-solid);
 }
 .record-pagination {
   display: flex;
@@ -292,7 +292,7 @@
   padding: 16px 20px;
   border-top: 1px solid var(--line);
   font-size: 10px;
-  color: #786783;
+  color: var(--color-text-muted);
 }
 .record-pagination nav {
   display: flex;
@@ -308,17 +308,17 @@
   border-radius: 9px;
   border: 1px solid transparent;
   background: transparent;
-  color: #9a84a9;
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 .record-pagination button[aria-current="page"] {
   color: var(--purple);
-  background: #f2e9f7;
-  border-color: #eaddf1;
+  background: var(--color-surface-soft);
+  border-color: var(--color-border-soft);
   font-weight: 600;
 }
 .record-pagination button:not(:disabled):hover {
-  background: #f7f1fb;
+  background: var(--color-surface-solid);
 }
 .record-pagination button:disabled {
   opacity: 0.4;
@@ -329,7 +329,7 @@
 .record-empty {
   padding: 48px 20px;
   text-align: center;
-  color: #a18bad;
+  color: var(--color-text-muted);
 }
 .record-empty > i {
   display: inline-grid;
@@ -337,15 +337,15 @@
   width: 48px;
   height: 48px;
   border-radius: 16px;
-  background: #f5eff9;
-  color: #b099bd;
+  background: var(--color-surface-solid);
+  color: var(--color-text-muted);
   font-size: 21px;
 }
 .record-empty h3 {
   margin: 16px 0 7px;
   font-size: 14px;
   font-weight: 500;
-  color: #6d527d;
+  color: var(--color-text-muted);
 }
 .record-empty p {
   font-size: 11px;
@@ -357,7 +357,7 @@
   flex-wrap: wrap;
   gap: 10px 24px;
   padding: 0 2px 20px;
-  color: #786783;
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 .record-counts > span {
@@ -366,7 +366,7 @@
   gap: 7px;
 }
 .record-counts b {
-  color: #6b537b;
+  color: var(--color-text-muted);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
@@ -374,7 +374,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #baa6c7;
+  background: var(--color-selected);
 }
 .record-count-dot.status-open {
   background: #d3ad6f;
@@ -390,17 +390,17 @@
   min-height: 44px;
   font-size: 11px;
   border-radius: 11px;
-  color: #947fa3;
+  color: var(--color-text-muted);
   box-shadow: none;
 }
 .record-trash-toggle > span {
   font-size: 10px;
-  background: #f0e8f5;
+  background: var(--color-surface-soft);
   border-radius: 5px;
   padding: 1px 5px;
 }
 .record-trash-toggle.is-active {
-  background: #f5eff9;
+  background: var(--color-surface-solid);
   color: var(--purple);
 }
 .record-inbox-list {
@@ -415,7 +415,7 @@
   min-height: 88px;
 }
 .member-complaint-row:hover {
-  background: #fdfbfe;
+  background: var(--color-surface-solid);
 }
 .member-complaint-main {
   display: flex;
@@ -435,10 +435,10 @@
   width: 38px;
   height: 38px;
   flex: 0 0 38px;
-  border: 1px solid #eee5f4;
+  border: 1px solid var(--color-border-soft);
   border-radius: 13px;
-  background: #f7f1fb;
-  color: #a47cb6;
+  background: var(--color-surface-solid);
+  color: var(--color-accent-hover);
   font-size: 15px;
 }
 .record-ticket-copy {
@@ -458,7 +458,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: #786783;
+  color: var(--color-text-muted);
 }
 .record-ticket-meta {
   display: flex;
@@ -468,7 +468,7 @@
 }
 .record-ticket-meta time {
   font-size: 10px;
-  color: #786783;
+  color: var(--color-text-muted);
 }
 .record-ticket-copy .record-expiry {
   font-size: 10px;
@@ -489,22 +489,22 @@
   flex-wrap: wrap;
   gap: 10px 18px;
   padding: 12px 20px;
-  border-top: 1px solid #f3eef6;
-  border-bottom: 1px solid #eee7f3;
-  background: #fdfbfe;
+  border-top: 1px solid var(--color-border-soft);
+  border-bottom: 1px solid var(--color-border-soft);
+  background: var(--color-surface-solid);
   font-size: 10px;
-  color: #786783;
+  color: var(--color-text-muted);
 }
 .record-selection.is-selecting {
-  background: #f8f3fc;
-  border-color: #e9dcf2;
+  background: var(--color-surface-solid);
+  border-color: var(--color-border-soft);
 }
 .record-selection-copy {
   display: grid;
   gap: 4px;
 }
 .record-selection-copy strong {
-  color: #745484;
+  color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 500;
 }
@@ -534,7 +534,7 @@
   gap: 14px;
 }
 .record-staff-row .complaint-row > i {
-  color: #c5b5cf;
+  color: var(--color-text-muted);
   font-size: 9px;
 }
 .record-staff-row .complaint-row.is-selectable {
@@ -549,7 +549,7 @@
   z-index: 1;
   display: grid;
   place-items: center;
-  background: #261a36a6;
+  background: rgb(var(--color-shadow-rgb) / 0.651);
   pointer-events: none;
   animation: record-selected-in 0.16s ease-out;
 }
@@ -564,10 +564,10 @@
   font-size: 16px;
   box-shadow:
     0 0 0 5px #ffffff24,
-    0 4px 14px #180d2830;
+    0 4px 14px rgb(var(--color-shadow-rgb) / 0.188);
 }
 .record-staff-row.is-selected .complaint-row:focus-visible {
-  outline-color: #dfc4ef;
+  outline-color: var(--color-focus);
 }
 @keyframes record-selected-in {
   from {
@@ -597,7 +597,7 @@
   overflow-wrap: anywhere;
   padding-inline-end: 5px;
   scrollbar-width: thin;
-  scrollbar-color: #d9c9e3 transparent;
+  scrollbar-color: var(--color-selected) transparent;
 }
 /* Only the two read-only record details fit their content; reply dialogs keep their height. */
 .dialog:has(article.record-dialog) {
@@ -625,7 +625,7 @@ article.record-dialog {
 .record-detail-heading > p {
   margin: 0;
   font-size: 12px;
-  color: #786783;
+  color: var(--color-text-muted);
   line-height: 1.85;
   white-space: pre-wrap;
 }
@@ -635,10 +635,10 @@ article.record-dialog {
   justify-content: space-between;
   gap: 16px;
   padding: 18px 20px;
-  border: 1px solid #ece1f3;
+  border: 1px solid var(--color-border-soft);
   border-radius: 14px;
-  background: #faf7fd;
-  color: #9273a3;
+  background: var(--color-surface-solid);
+  color: var(--color-text-muted);
   font-size: 12px;
 }
 .record-earned strong {
@@ -658,22 +658,22 @@ article.record-dialog {
 }
 .record-detail-grid > div {
   padding-bottom: 14px;
-  border-bottom: 1px solid #f0e9f5;
+  border-bottom: 1px solid var(--color-border-soft);
 }
 .record-detail-grid dt {
   font-size: 10px;
-  color: #786783;
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 .record-detail-grid dd {
   font-size: 12px;
-  color: #786183;
+  color: var(--color-text-muted);
   margin: 0;
 }
 .record-hint,
 .record-update {
   font-size: 11px;
-  color: #786783;
+  color: var(--color-text-muted);
   line-height: 1.8;
 }
 .record-detail-actions {
@@ -701,8 +701,8 @@ article.record-dialog {
   line-height: 1.9;
 }
 .record-dialog .thread-original {
-  background: #faf7fc;
-  border: 1px solid #f0e7f5;
+  background: var(--color-surface-solid);
+  border: 1px solid var(--color-border-soft);
 }
 .record-dialog .thread-reply {
   background: #f2faf7;
@@ -719,7 +719,7 @@ article.record-dialog {
   font-size: 12px;
 }
 .record-dialog .sub {
-  color: #786783;
+  color: var(--color-text-muted);
   font-size: 10px;
 }
 .record-reply .field textarea {
@@ -793,7 +793,7 @@ article.record-dialog {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 11px 8px;
     padding: 17px 16px;
-    border-top: 1px solid #f1ecf5;
+    border-top: 1px solid var(--color-border-soft);
   }
   .report-table td,
   .report-table td:last-child {
@@ -816,7 +816,7 @@ article.record-dialog {
   }
   .report-table td:nth-child(2)::before {
     content: "วันที่จัด ";
-    color: #786783;
+    color: var(--color-text-muted);
     margin-inline-end: 6px;
   }
   .report-table td:nth-child(3) {

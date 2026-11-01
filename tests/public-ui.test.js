@@ -14,6 +14,7 @@ async function screen({
   hash = "#manage",
   objectUrls = null,
   clock = null,
+  timeouts = null,
 } = {}) {
   const { window, document } = parseHTML(
     fs.readFileSync("public/index.html", "utf8"),
@@ -76,8 +77,16 @@ async function screen({
       }
     },
     crypto: require("node:crypto").webcrypto,
-    setTimeout: () => 1,
-    clearTimeout() {},
+    setTimeout: (callback, ms) => {
+      if (!timeouts) return 1;
+      const entry = { id: timeouts.length + 1, callback, ms, cancelled: false };
+      timeouts.push(entry);
+      return entry.id;
+    },
+    clearTimeout(id) {
+      const entry = timeouts?.find((timer) => timer.id === id);
+      if (entry) entry.cancelled = true;
+    },
     setInterval: (callback) => intervals.push(callback),
     clearInterval() {},
     fetch: async (endpoint, options = {}) => {
@@ -145,7 +154,7 @@ async function screen({
     document,
     calls,
     poll: async () => {
-      for (const callback of intervals) await callback();
+      for (const callback of [...intervals]) await callback();
     },
   };
 }
@@ -371,6 +380,11 @@ test("notification history clear confirms and preserves current messages; search
   click("notification-history");
   click("notification-clear");
   assert.ok(document.querySelector("#confirm-root .confirm-dialog"));
+  assert.equal(
+    document.querySelector("#confirm-root .confirm-dialog").dataset.tone,
+    "danger",
+  );
+  assert.ok(document.querySelector("#confirm-root .confirm-symbol"));
   click("answer-no");
   await settle();
   assert.equal(ui.saved.length, 0);
@@ -654,6 +668,543 @@ test("authenticated refresh does not wait for or download the public catalog and
   );
 });
 
+test("login opens the dashboard from its authenticated payload without another workspace request", async () => {
+  for (const role of ["user", "staff"]) {
+    const account = {
+      id: "bundled-login",
+      name: "Example Member",
+      role,
+      status: "APPROVED",
+      email: "bundled@example.test",
+    };
+    const ui = await screen({
+      request: async (endpoint) => {
+        if (endpoint === "/api/login")
+          return {
+            ok: true,
+            json: async () => ({
+              user: account,
+              csrf: "bundled-csrf",
+              store: {
+                users: [account],
+                workshops: [],
+                registrations: [],
+                complaints: [],
+                ratings: [],
+                notifications: [],
+                auditLog: [],
+                revision: 1,
+              },
+            }),
+          };
+        if (endpoint === "/api/store")
+          throw Error("Redundant workspace request blocked");
+      },
+    });
+    ui.document
+      .querySelector('[data-action="login"]')
+      .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+    const form = ui.document.querySelector("#login-form");
+    form.querySelector('[name="identity"]').value = account.email;
+    form.querySelector('[name="password"]').value = "ExamplePassword123!";
+    form.dispatchEvent(
+      new ui.window.Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ui.calls.filter((url) => url === "/api/login").length, 1);
+    assert.ok(!ui.calls.includes("/api/store"));
+    assert.ok(ui.document.querySelector(".sidebar"));
+    assert.equal(ui.document.querySelector("#login-form"), null);
+    assert.equal(
+      ui.document.querySelector(".alert-toast").dataset.tone,
+      "success",
+    );
+    assert.equal(
+      Boolean(ui.document.querySelector(".staff-dashboard")),
+      role === "staff",
+    );
+    assert.equal(
+      ui.document.querySelector("[data-sync-status]").textContent,
+      "เชื่อมต่อแล้ว",
+    );
+  }
+});
+
+test("workspace polling does not overlap slow requests, skips hidden tabs and preserves active input", async () => {
+  const account = {
+    id: "poll-user",
+    name: "Poll member",
+    role: "staff",
+    status: "APPROVED",
+    email: "poll@example.test",
+  };
+  const store = {
+    users: [account],
+    workshops: [],
+    registrations: [],
+    complaints: [],
+    ratings: [],
+    notifications: [],
+    auditLog: [],
+    revision: 0,
+  };
+  let resolvePoll;
+  let initial = true;
+  const ui = await screen({
+    hash: "#manage",
+    simulateFocus: true,
+    request: async (endpoint) => {
+      if (endpoint === "/api/session")
+        return {
+          ok: true,
+          json: async () => ({ user: account, csrf: "poll-csrf" }),
+        };
+      if (endpoint === "/api/store") {
+        if (initial) {
+          initial = false;
+          return {
+            ok: true,
+            json: async () => ({ store: structuredClone(store) }),
+          };
+        }
+        return new Promise((resolve) => {
+          resolvePoll = resolve;
+        });
+      }
+    },
+  });
+  let visibility = "visible";
+  Object.defineProperty(ui.document, "visibilityState", {
+    get: () => visibility,
+  });
+  visibility = "hidden";
+  const initialCalls = ui.calls.length;
+  await ui.poll();
+  assert.equal(
+    ui.calls.length,
+    initialCalls,
+    "A background tab must not fetch a whole workspace",
+  );
+  visibility = "visible";
+  const first = ui.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  const inFlightCalls = ui.calls.length;
+  const second = ui.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    ui.calls.length,
+    inFlightCalls,
+    "Only one poll may be in flight",
+  );
+  const search = ui.document.querySelector("#search");
+  assert.ok(search);
+  search.value = "Typing while a response arrives";
+  search.focus();
+  resolvePoll({
+    ok: true,
+    json: async () => ({ store: { ...store, revision: 1 } }),
+  });
+  await Promise.all([first, second]);
+  assert.equal(
+    ui.document.querySelector("#search"),
+    search,
+    "A late response must not replace the focused field",
+  );
+  assert.equal(search.value, "Typing while a response arrives");
+  ui.document.body.focus();
+  const third = ui.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    ui.calls.length,
+    inFlightCalls + 1,
+    "Polling resumes after the request and editing finish",
+  );
+  resolvePoll({
+    ok: true,
+    json: async () => ({ store: { ...store, revision: 1 } }),
+  });
+  await third;
+});
+
+test("a late polling error from an old session cannot log out a newly signed-in account", async () => {
+  const account = {
+    id: "same-actor",
+    name: "Same actor",
+    email: "same@example.test",
+    role: "staff",
+    status: "APPROVED",
+  };
+  const store = {
+    users: [account],
+    workshops: [],
+    registrations: [],
+    complaints: [],
+    ratings: [],
+    notifications: [],
+    auditLog: [],
+    revision: 0,
+  };
+  let initial = true,
+    resolveOldPoll;
+  const ui = await screen({
+    hash: "#dashboard",
+    request: async (endpoint) => {
+      if (endpoint === "/api/session" || endpoint === "/api/login")
+        return {
+          ok: true,
+          json: async () => ({
+            user: account,
+            csrf: initial ? "original-session" : "new-session",
+            ...(endpoint === "/api/login" ? { store } : {}),
+          }),
+        };
+      if (endpoint === "/api/store") {
+        if (initial) {
+          initial = false;
+          return { ok: true, json: async () => ({ store }) };
+        }
+        return new Promise((resolve) => {
+          resolveOldPoll = resolve;
+        });
+      }
+      if (endpoint === "/api/logout")
+        return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+  const oldPoll = ui.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  const click = (selector) =>
+    ui.document
+      .querySelector(selector)
+      .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  click('[data-action="toggle-account-menu"]');
+  click('[data-action="logout"]');
+  click('#confirm-root [data-action="answer-yes"]');
+  await new Promise((resolve) => setImmediate(resolve));
+  click(".public-login");
+  const form = ui.document.querySelector("#login-form");
+  form.querySelector('[name="identity"]').value = account.email;
+  form.querySelector('[name="password"]').value = "ExamplePassword123!";
+  form.dispatchEvent(
+    new ui.window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(ui.document.querySelector(".staff-dashboard"));
+  resolveOldPoll({
+    ok: false,
+    status: 401,
+    json: async () => ({ error: "Old session expired" }),
+  });
+  await oldPoll;
+  assert.ok(
+    ui.document.querySelector(".staff-dashboard"),
+    "An old 401 response must not replace the new workspace",
+  );
+  assert.equal(ui.document.querySelector(".public-login"), null);
+});
+
+test("compact learner overview keeps real totals, the next activity and navigation intact", async () => {
+  const account = {
+    id: "overview-user",
+    name: "Learner",
+    role: "user",
+    status: "APPROVED",
+    type: "นักศึกษา",
+  };
+  const workshops = [
+    {
+      id: "later",
+      title: "Later workshop",
+      start: "2099-11-18T09:00",
+      end: "2099-11-18T12:00",
+      place: "Room B",
+      capacity: 25,
+      hours: 3,
+      cover: "",
+    },
+    {
+      id: "next",
+      title: "Next <workshop>",
+      start: "2099-11-14T09:00",
+      end: "2099-11-14T12:00",
+      place: "Room A",
+      capacity: 30,
+      hours: 3,
+      cover: "/assets/images/image-003.jpg",
+    },
+    {
+      id: "completed",
+      title: "Completed",
+      start: "2025-01-01T09:00",
+      end: "2025-01-01T12:00",
+      place: "Room C",
+      capacity: 30,
+      hours: 3,
+      cover: "",
+    },
+  ];
+  const store = {
+    users: [account],
+    workshops,
+    registrations: workshops.map((w, i) => ({
+      id: "overview-reg-" + i,
+      userId: account.id,
+      workshopId: w.id,
+      status: i === 2 ? "ATTENDED" : "PENDING",
+    })),
+    notifications: [
+      { id: "new", userId: account.id },
+      { id: "read", userId: account.id, readAt: "2026-01-01" },
+    ],
+    ratings: [],
+    complaints: [],
+    auditLog: [],
+    revision: 1,
+  };
+  const { document, window, calls } = await screen({
+    hash: "#dashboard",
+    request: (endpoint) => {
+      if (endpoint === "/api/session")
+        return {
+          ok: true,
+          json: async () => ({ user: account, csrf: "test-csrf" }),
+        };
+      if (endpoint === "/api/store")
+        return {
+          ok: true,
+          json: async () => ({ store: structuredClone(store) }),
+        };
+    },
+  });
+  const root = document.querySelector(".learner-dashboard");
+  assert.ok(root);
+  assert.equal(
+    root.querySelector("#learner-next-title").textContent,
+    "Next <workshop>",
+  );
+  assert.equal(root.querySelector("#learner-next-title workshop"), null);
+  assert.deepEqual(
+    [...root.querySelectorAll(".learner-summary-value strong")].map(
+      (node) => node.textContent,
+    ),
+    ["2", "3", "1"],
+  );
+  assert.match(
+    root.querySelector(".learner-next-facts").textContent,
+    /29 \/ 30/,
+  );
+  assert.equal(
+    root.querySelector(".learner-next-media img").getAttribute("src"),
+    workshops[1].cover,
+  );
+  const requests = calls.length;
+  root
+    .querySelector('[data-action="workshop-detail"][data-id="next"]')
+    .dispatchEvent(new window.Event("click", { bubbles: true }));
+  assert.equal(
+    document.querySelector("#dialog-title").textContent,
+    "Next <workshop>",
+  );
+  document
+    .querySelector('[data-action="close"]')
+    .dispatchEvent(new window.Event("click", { bubbles: true }));
+  document
+    .querySelector('.learner-summary-footer [data-id="reports"]')
+    .dispatchEvent(new window.Event("click", { bubbles: true }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(document.querySelector(".report-toolbar"));
+  assert.equal(calls.length, requests, "overview actions reuse loaded data");
+});
+
+for (const repeat of [false, true])
+  test(`${repeat ? "repeat" : "new"} enrollment confirms the selected workshop before saving`, async () => {
+    const account = {
+      id: "enrollment-user",
+      name: "Learner",
+      role: "user",
+      status: "APPROVED",
+      type: "นักศึกษา",
+    };
+    const workshops = [
+      {
+        id: "first",
+        title: "First workshop",
+        start: "2099-11-10T09:00",
+        end: "2099-11-10T12:00",
+        place: "Room A",
+        capacity: 30,
+        hours: 3,
+        cover: "",
+      },
+      {
+        id: "selected",
+        title: "Selected <workshop>",
+        start: "2099-11-11T13:00",
+        end: "2099-11-11T16:00",
+        place: "Room <B>",
+        capacity: 25,
+        hours: 3,
+        cover: "/assets/images/image-003.jpg",
+      },
+    ];
+    const store = {
+      users: [account],
+      workshops,
+      registrations: repeat
+        ? [
+            {
+              id: "existing",
+              workshopId: "selected",
+              userId: account.id,
+              status: "CANCELLED",
+            },
+          ]
+        : [],
+      notifications: [],
+      complaints: [],
+      ratings: [],
+      auditLog: [],
+      revision: 1,
+    };
+    const saves = [];
+    const { document, window } = await screen({
+      hash: "#workshops",
+      request: (endpoint, options) => {
+        if (endpoint === "/api/session")
+          return {
+            ok: true,
+            json: async () => ({ user: account, csrf: "enrollment-test" }),
+          };
+        if (endpoint === "/api/store") {
+          if (options.method === "POST") {
+            const saved = JSON.parse(options.body).store;
+            saves.push(saved);
+            Object.assign(store, saved);
+          }
+          return {
+            ok: true,
+            json: async () => ({ store: structuredClone(store) }),
+          };
+        }
+      },
+    });
+    const click = (selector) =>
+      document
+        .querySelector(selector)
+        .dispatchEvent(new window.Event("click", { bubbles: true }));
+    click('[data-action="enroll"][data-id="first"]');
+    assert.equal(
+      document.querySelector("#confirm-workshop-title").textContent,
+      "First workshop",
+    );
+    assert.match(
+      document.querySelector(".confirm-workshop-cover").getAttribute("src"),
+      /bsru-workshop-logo/,
+    );
+    assert.equal(saves.length, 0);
+    click('#modal-root [data-action="close"]');
+    assert.equal(saves.length, 0, "cancelling must not enroll");
+    click('[data-action="enroll"][data-id="selected"]');
+    assert.equal(
+      document.querySelector("#dialog-title").textContent,
+      "ยืนยันการลงทะเบียน",
+    );
+    assert.equal(document.querySelector("#modal-root .confirm-symbol"), null);
+    assert.equal(
+      document.querySelector(".confirm-workshop").nextElementSibling.id,
+      "action-confirm-message",
+    );
+    assert.equal(
+      document.querySelector("#confirm-workshop-title").textContent,
+      workshops[1].title,
+    );
+    assert.equal(
+      document.querySelector("#confirm-workshop-title workshop"),
+      null,
+    );
+    assert.match(
+      document.querySelector(".confirm-workshop-meta").textContent,
+      /Room <B>/,
+    );
+    assert.match(
+      document.querySelector(".confirm-workshop-meta").textContent,
+      /13:00/,
+    );
+    assert.match(
+      document.querySelector(".confirm-workshop-meta").textContent,
+      /16:00/,
+    );
+    assert.equal(
+      document.querySelector(".confirm-workshop-cover").getAttribute("src"),
+      workshops[1].cover,
+    );
+    assert.equal(
+      document
+        .querySelector('.dialog[role="alertdialog"]')
+        .getAttribute("aria-describedby"),
+      "action-confirm-message confirm-workshop-title",
+    );
+    if (repeat)
+      assert.match(
+        document.querySelector("#action-confirm-message").textContent,
+        /อีกครั้ง/,
+      );
+    assert.equal(saves.length, 0);
+    click('#modal-root [data-action="confirm-enroll"]');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0].registrations.length, 1);
+    assert.equal(saves[0].registrations[0].workshopId, "selected");
+    assert.equal(saves[0].registrations[0].status, "PENDING");
+    if (repeat) assert.equal(saves[0].registrations[0].id, "existing");
+  });
+
+test("the decorative 3D loader persists during pending data and exits without waiting for animation", async () => {
+  let finishSession, finishCatalog;
+  const session = new Promise((resolve) => {
+    finishSession = resolve;
+  });
+  const catalog = new Promise((resolve) => {
+    finishCatalog = resolve;
+  });
+  const timers = [];
+  const { document } = await screen({
+    timeouts: timers,
+    request: (endpoint) => {
+      if (endpoint === "/api/session") return session;
+      if (endpoint === "/api/workshops") return catalog;
+    },
+  });
+  const scene = document.querySelector(".app-bootstrap-scene");
+  assert.ok(scene);
+  assert.equal(
+    scene.closest(".app-bootstrap-emblem").getAttribute("aria-hidden"),
+    "true",
+  );
+  assert.equal(scene.querySelectorAll(".app-bootstrap-orbit").length, 2);
+  assert.equal(
+    document.querySelector(".app-bootstrap-content").getAttribute("role"),
+    "status",
+  );
+  assert.equal(
+    document.querySelector(".app-bootstrap-content").getAttribute("aria-busy"),
+    "true",
+  );
+  finishSession({ ok: true, json: async () => ({ user: null }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(document.querySelector(".app-bootstrap-scene"), scene);
+  assert.equal(document.querySelector(".app-bootstrap button"), null);
+  finishCatalog({ ok: true, json: async () => ({ workshops: [] }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(document.querySelector(".app-bootstrap"), null);
+  assert.ok(document.querySelector('[data-action="login"]'));
+  assert.equal(
+    timers.length,
+    0,
+    "animation must not introduce a loading delay",
+  );
+});
+
 test("public page can retry a failed catalog request and shows an honest empty state", async () => {
   const { window, document, calls } = await screen({
     failOnce: true,
@@ -672,7 +1223,7 @@ test("public page can retry a failed catalog request and shows an honest empty s
   );
 });
 
-test("login promotional carousel has three slides and preserves form input and errors while changing images", async () => {
+test("login and registration share one stable modal and media panel while retaining drafts", async () => {
   const ui = await screen({
     simulateFocus: true,
     request: async (endpoint) =>
@@ -680,7 +1231,7 @@ test("login promotional carousel has three slides and preserves form input and e
         ? {
             ok: false,
             status: 401,
-            json: async () => ({ error: "บัญชีหรือรหัสผ่านไม่ถูกต้อง" }),
+            json: async () => ({ error: "INVALID_LOGIN" }),
           }
         : undefined,
   });
@@ -691,81 +1242,376 @@ test("login promotional carousel has three slides and preserves form input and e
     control.dispatchEvent(new ui.window.Event("click", { bubbles: true }));
   };
   click('[data-action="login"]');
-  assert.equal(ui.document.querySelectorAll(".login-promo-slide").length, 3);
-  assert.equal(
-    ui.document.querySelectorAll(".login-promo-slide:not([hidden])").length,
-    1,
-  );
-  const form = ui.document.querySelector("#login-form");
-  form.querySelector('[name="identity"]').value = "member@example.test";
-  form.querySelector('[name="password"]').value = "TestPassword123!";
-  form.dispatchEvent(
+  const dialog = ui.document.querySelector("#modal-root .dialog");
+  const media = dialog.querySelector(".auth-visual");
+  assert.ok(media?.querySelector("img[alt]"));
+  const login = dialog.querySelector("#login-form");
+  login.querySelector('[name="identity"]').value = "member@example.test";
+  login.querySelector('[name="password"]').value = "TestPassword123!";
+  login.dispatchEvent(
     new ui.window.Event("submit", { bubbles: true, cancelable: true }),
   );
   await new Promise((resolve) => setImmediate(resolve));
-  click('[data-action="auth-toggle-password"]');
-  click('[data-action="auth-promo"][data-id="next"]');
+  click('#login-form [data-action="auth-toggle-password"]');
+  click('[data-action="register"]');
+  const register = dialog.querySelector("#register-form");
+  register.querySelector('[name="name"]').value = "Draft member";
+  register.querySelector('[name="email"]').value = "draft@example.test";
+  assert.equal(ui.document.querySelector("#modal-root .dialog"), dialog);
+  assert.equal(dialog.querySelector(".auth-visual"), media);
+  assert.equal(dialog.querySelector("#auth-login-panel").hidden, true);
+  assert.equal(dialog.querySelector("#auth-register-panel").hidden, false);
   assert.equal(
-    ui.document.querySelector(".login-promo-slide:not([hidden])").dataset.slide,
-    "1",
-  );
-  assert.ok(ui.document.querySelector("#login-form") === form);
-  assert.equal(
-    form.querySelector('[name="identity"]').value,
-    "member@example.test",
-  );
-  assert.equal(
-    form.querySelector('[name="password"]').value,
-    "TestPassword123!",
-  );
-  assert.equal(form.querySelector('[name="password"]').type, "text");
-  assert.match(
-    form.querySelector(".error").textContent,
-    /บัญชีหรือรหัสผ่านไม่ถูกต้อง/,
-  );
-  click('[data-action="auth-promo"][data-id="2"]');
-  assert.equal(
-    ui.document.querySelector(".login-promo-slide:not([hidden])").dataset.slide,
-    "2",
-  );
-  assert.equal(
-    ui.document
-      .querySelector('[data-action="auth-promo"][data-id="2"]')
-      .getAttribute("aria-pressed"),
+    dialog.querySelector("#auth-register-tab").getAttribute("aria-selected"),
     "true",
   );
-  click('[data-action="auth-promo"][data-id="next"]');
   assert.equal(
-    ui.document.querySelector(".login-promo-slide:not([hidden])").dataset.slide,
-    "0",
+    login.querySelector('[name="password"]').type,
+    "password",
+    "switching masks any revealed password",
   );
-  click('[data-action="auth-promo"][data-id="prev"]');
+  const ids = [...dialog.querySelectorAll("[id]")].map((node) => node.id);
   assert.equal(
-    ui.document.querySelector(".login-promo-slide:not([hidden])").dataset.slide,
-    "2",
+    ids.length,
+    new Set(ids).size,
+    "hidden forms must not duplicate field IDs",
   );
+  click("#auth-login-tab");
+  assert.equal(dialog.querySelector("#login-form"), login);
+  assert.equal(
+    login.querySelector('[name="identity"]').value,
+    "member@example.test",
+  );
+  assert.match(login.querySelector(".error").textContent, /INVALID_LOGIN/);
   const arrow = new ui.window.Event("keydown", {
     bubbles: true,
     cancelable: true,
   });
-  Object.defineProperty(arrow, "key", { value: "ArrowLeft" });
-  ui.document
-    .querySelector('[data-action="auth-promo"][data-id="prev"]')
-    .dispatchEvent(arrow);
+  Object.defineProperty(arrow, "key", { value: "ArrowRight" });
+  dialog.querySelector("#auth-login-tab").dispatchEvent(arrow);
+  assert.equal(dialog.querySelector("#auth-register-panel").hidden, false);
   assert.equal(
-    ui.document.querySelector(".login-promo-slide:not([hidden])").dataset.slide,
-    "1",
+    ui.document.activeElement,
+    dialog.querySelector("#auth-register-tab"),
   );
-  click('[data-action="register"]');
-  assert.ok(ui.document.querySelector("#register-form"));
-  assert.ok(!ui.document.querySelector(".login-layout"));
+  assert.equal(register.querySelector('[name="name"]').value, "Draft member");
+  assert.equal(
+    register.querySelector('[name="email"]').value,
+    "draft@example.test",
+  );
+  click("#auth-login-tab");
+  const last = dialog.querySelector(
+    '#auth-login-panel [data-action="register"]',
+  );
+  last.focus();
+  const tab = new ui.window.Event("keydown", {
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(tab, "key", { value: "Tab" });
+  last.dispatchEvent(tab);
+  assert.equal(
+    ui.document.activeElement,
+    dialog.querySelector('[data-action="close"]'),
+  );
+  const reverse = new ui.window.Event("keydown", {
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperties(reverse, {
+    key: { value: "Tab" },
+    shiftKey: { value: true },
+  });
+  ui.document.activeElement.dispatchEvent(reverse);
+  assert.equal(ui.document.activeElement, last);
+  click('[data-action="forgot"]');
+  assert.ok(!ui.document.querySelector(".auth-layout"));
+  click('#modal-root [data-action="login"]');
+  assert.equal(
+    ui.document.querySelector('#login-form [name="password"]').value,
+    "",
+  );
+  click('#modal-root [data-action="close"]');
   click('[data-action="login"]');
   assert.equal(
-    ui.document.querySelector(".login-promo-slide:not([hidden])").dataset.slide,
-    "0",
+    ui.document.querySelector('#register-form [name="email"]').value,
+    "",
   );
-  click('[data-action="forgot"]');
-  assert.ok(!ui.document.querySelector(".login-layout"));
+});
+
+test("login button shows real request progress, restores on errors and celebrates success without delaying navigation", async () => {
+  let resolveLogin, resolveStore;
+  const timeouts = [],
+    clock = { now: Date.parse("2026-11-01T12:00:00Z") };
+  const account = {
+    id: "motion-user",
+    name: "Motion Member",
+    role: "user",
+    status: "APPROVED",
+    email: "motion@example.test",
+  };
+  const ui = await screen({
+    timeouts,
+    clock,
+    simulateFocus: true,
+    request: async (endpoint) => {
+      if (endpoint === "/api/login")
+        return new Promise((resolve) => {
+          resolveLogin = resolve;
+        });
+      if (endpoint === "/api/store")
+        return new Promise((resolve) => {
+          resolveStore = resolve;
+        });
+      if (endpoint === "/api/logout")
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({
+            error: "SERVICE_UNAVAILABLE <img src=x onerror=alert(1)>",
+          }),
+        };
+    },
+  });
+  ui.document
+    .querySelector('[data-action="login"]')
+    .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  const form = ui.document.querySelector("#login-form"),
+    button = form.querySelector('[type="submit"]');
+  const submit = () =>
+    form.dispatchEvent(
+      new ui.window.Event("submit", { bubbles: true, cancelable: true }),
+    );
+  form.querySelector('[name="identity"]').value = account.email;
+  form.querySelector('[name="password"]').value = "TestPassword123!";
+  submit();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(button.getAttribute("aria-busy"), "true");
+  assert.ok(button.querySelector(".button-spinner"));
+  assert.equal(button.disabled, true);
+  submit();
+  assert.equal(ui.calls.filter((path) => path === "/api/login").length, 1);
+  resolveLogin({
+    ok: false,
+    status: 401,
+    json: async () => ({ error: "INVALID_LOGIN <img src=x onerror=alert(1)>" }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(button.getAttribute("aria-busy"), null);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, "เข้าสู่ระบบ");
+  assert.equal(form.querySelector(".error img"), null);
+  assert.match(form.querySelector(".error").textContent, /INVALID_LOGIN/);
+  submit();
+  await new Promise((resolve) => setImmediate(resolve));
+  resolveLogin({
+    ok: true,
+    json: async () => ({ user: account, csrf: "test-csrf" }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(button.classList.contains("is-success"));
+  assert.ok(ui.document.querySelector("#login-form"));
+  assert.equal(
+    ui.document.querySelector("#toast-root .alert-toast"),
+    null,
+    "do not announce success before the workspace opens",
+  );
+  resolveStore({
+    ok: true,
+    json: async () => ({
+      store: {
+        users: [account],
+        workshops: [],
+        registrations: [],
+        complaints: [],
+        ratings: [],
+        notifications: [],
+        auditLog: [],
+        revision: 1,
+      },
+    }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(ui.document.querySelector(".sidebar"));
+  assert.equal(ui.document.querySelector("#login-form"), null);
+  const notice = ui.document.querySelector("#toast-root .alert-toast");
+  assert.equal(notice.dataset.tone, "success");
+  assert.ok(notice.querySelector(".alert-toast-icon"));
+  const firstTimer = timeouts.at(-1);
+  assert.equal(firstTimer.ms, 5000);
+  clock.now += 1000;
+  notice.dispatchEvent(new ui.window.Event("pointerenter"));
+  assert.equal(firstTimer.cancelled, true);
+  notice.dispatchEvent(new ui.window.Event("pointerleave"));
+  assert.equal(
+    timeouts.at(-1).ms,
+    4000,
+    "resume the remaining time instead of restarting the alert",
+  );
+  clock.now += 500;
+  notice.querySelector("[data-toast-dismiss]").focus();
+  assert.equal(
+    timeouts.at(-1).cancelled,
+    true,
+    "keyboard focus pauses dismissal",
+  );
+  notice.dispatchEvent(new ui.window.Event("focusout"));
+  assert.equal(timeouts.at(-1).ms, 3500);
+  const previousTimer = timeouts.at(-1);
+  ui.document
+    .querySelector('[data-action="toggle-account-menu"]')
+    .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  ui.document
+    .querySelector('[data-action="logout"]')
+    .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  ui.document
+    .querySelector('#confirm-root [data-action="answer-yes"]')
+    .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const failure = ui.document.querySelector("#toast-root .alert-toast");
+  const failureTimer = timeouts.at(-1);
+  assert.equal(failure.dataset.tone, "error");
+  assert.equal(
+    ui.document.querySelector("#toast-root").getAttribute("role"),
+    "alert",
+  );
+  assert.equal(
+    failure.querySelector("img"),
+    null,
+    "server error text is escaped",
+  );
+  assert.equal(failureTimer.ms, 8000);
+  notice.dispatchEvent(new ui.window.Event("pointerenter"));
+  assert.equal(
+    failureTimer.cancelled,
+    false,
+    "an old alert must never cancel the replacement timer",
+  );
+  previousTimer.callback();
+  assert.equal(ui.document.querySelector("#toast-root .alert-toast"), failure);
+  failure
+    .querySelector("[data-toast-dismiss]")
+    .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  assert.equal(ui.document.querySelector("#toast-root .alert-toast"), null);
+});
+
+test("closing a loading signup modal does not reopen it after a late server response", async () => {
+  let finish;
+  const ui = await screen({
+    request: async (endpoint) =>
+      endpoint === "/api/registration/request"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : undefined,
+  });
+  const click = (selector) =>
+    ui.document
+      .querySelector(selector)
+      .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  click('[data-action="login"]');
+  click("#auth-register-tab");
+  const form = ui.document.querySelector("#register-form");
+  form.querySelector('[name="password"]').value = "TestPassword123!";
+  form.querySelector('[name="confirmation"]').value = "TestPassword123!";
+  form.dispatchEvent(
+    new ui.window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    form.querySelector('[type="submit"]').getAttribute("aria-busy"),
+    "true",
+  );
+  click('#modal-root [data-action="close"]');
+  finish({
+    ok: true,
+    json: async () => ({ registered: true, email: "late@example.test" }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ui.document.querySelector("#modal-root .dialog"), null);
+  assert.equal(ui.document.querySelector("#toast-root .alert-toast"), null);
+});
+
+test("new password meters track the server policy and confirmation without rebuilding the form", async () => {
+  const ui = await screen();
+  const click = (selector) =>
+    ui.document
+      .querySelector(selector)
+      .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  click('[data-action="login"]');
+  assert.equal(
+    ui.document.querySelector('#login-form [role="progressbar"]'),
+    null,
+  );
+  click('[data-action="register"]');
+  const form = ui.document.querySelector("#register-form");
+  const password = form.querySelector('[name="password"]');
+  const confirmation = form.querySelector('[name="confirmation"]');
+  const policy = form.querySelector('[data-password-feedback="policy"]');
+  const matching = form.querySelector('[data-password-feedback="match"]');
+  const meter = policy.querySelector('[role="progressbar"]');
+  assert.equal(meter.getAttribute("aria-valuenow"), "0");
+  assert.equal(policy.dataset.state, "empty");
+  const type = (field, value) => {
+    field.value = value;
+    field.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+  };
+  const { validNewPassword } = require("../src/core/utils");
+  for (const candidate of [
+    "abc",
+    "StrongPassword123!",
+    "strongpassword123!",
+    "STRONGPASSWORD123!",
+    "StrongPassword!!!",
+    "StrongPassword123",
+    "Strong Password123!",
+    "Password123!",
+    "Qwerty123456!",
+    "Aa1!" + "x".repeat(125),
+  ]) {
+    type(password, candidate);
+    assert.equal(
+      policy.dataset.state === "complete",
+      validNewPassword(candidate),
+      "feedback must agree with server validation",
+    );
+    assert.ok(meter.getAttribute("aria-valuetext"));
+  }
+  type(password, "StrongPassword123!");
+  assert.equal(meter.getAttribute("aria-valuenow"), "7");
+  assert.equal(meter.querySelector("span").style.width, "100%");
+  type(confirmation, "DifferentPassword123!");
+  assert.equal(matching.dataset.state, "mismatch");
+  assert.equal(confirmation.getAttribute("aria-invalid"), "true");
+  type(confirmation, "StrongPassword123!");
+  assert.equal(matching.dataset.state, "complete");
+  assert.equal(confirmation.getAttribute("aria-invalid"), null);
+  type(password, "AnotherPassword123!");
+  assert.equal(
+    matching.dataset.state,
+    "mismatch",
+    "changing the first field rechecks confirmation",
+  );
+  type(password, "Password123!");
+  type(confirmation, "Password123!");
+  assert.notEqual(
+    matching.dataset.state,
+    "complete",
+    "matching an invalid/common password must not show a complete meter",
+  );
+  click(
+    '#register-form [data-action="auth-toggle-password"][data-id="password"]',
+  );
+  assert.equal(password.type, "text");
+  assert.equal(ui.document.querySelector("#register-form"), form);
+  assert.ok(
+    ui.document.getElementById(password.getAttribute("aria-describedby")),
+  );
+  type(password, "");
+  type(confirmation, "");
+  assert.equal(policy.dataset.state, "empty");
+  assert.equal(matching.dataset.state, "empty");
+  assert.equal(meter.getAttribute("aria-valuenow"), "0");
 });
 
 test("password eye controls switch icons and accessible labels while keeping each password field independent", async () => {
@@ -779,7 +1625,7 @@ test("password eye controls switch icons and accessible labels while keeping eac
   const button = ui.document.querySelector(
     '[data-action="auth-toggle-password"]',
   );
-  const password = ui.document.querySelector("#password");
+  const password = ui.document.querySelector('#login-form [name="password"]');
   password.value = "ExamplePassword123!";
   assert.ok(button.querySelector(".fa-eye"));
   assert.equal(button.getAttribute("aria-label"), "แสดงรหัสผ่าน");
@@ -849,7 +1695,7 @@ test("public home replaces the guest workshop page with illustrated news and a l
     ),
     ["newest", "middle", "fourth", "fifth", "old"],
   );
-  assert.equal(ui.document.querySelectorAll(".public-news-card img").length, 3);
+  assert.equal(ui.document.querySelectorAll(".public-news-card img").length, 4);
   assert.ok(
     [...ui.document.querySelectorAll(".public-news-card img")].every((img) =>
       img.getAttribute("alt"),
@@ -873,6 +1719,21 @@ test("public home replaces the guest workshop page with illustrated news and a l
       .querySelector(".public-announcement-modal img")
       .getAttribute("src"),
     "/assets/images/image-005.jpg",
+  );
+  assert.ok(
+    ui.document.querySelector(".public-announcement-detail").textContent.trim()
+      .length > 0,
+  );
+  ui.document
+    .querySelector(
+      '.public-news-card [data-action="announcement"][data-id="learning-community"]',
+    )
+    .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  assert.equal(
+    ui.document
+      .querySelector(".public-announcement-modal img")
+      .getAttribute("src"),
+    "/assets/images/image-002.jpg",
   );
   assert.ok(
     ui.document.querySelector(".public-announcement-detail").textContent.trim()
@@ -927,6 +1788,121 @@ test("public workshop carousel supports controls, keyboard and boundaries withou
     true,
   );
 });
+
+for (const role of ["user", "staff"])
+  test(`${role}: logout confirms first, reports real outcomes and clears private data even if the public catalog fails`, async () => {
+    let finishLogout;
+    const account = {
+      id: "logout-person",
+      name: "Private Member",
+      role,
+      status: "APPROVED",
+      email: "logout@example.test",
+      type: "นักศึกษา",
+      code: "LOGOUT",
+    };
+    const ui = await screen({
+      request: async (endpoint) => {
+        if (endpoint === "/api/session")
+          return {
+            ok: true,
+            json: async () => ({ user: account, csrf: "test-csrf" }),
+          };
+        if (endpoint === "/api/store")
+          return {
+            ok: true,
+            json: async () => ({
+              store: {
+                users: [account],
+                workshops: [],
+                registrations: [],
+                complaints: [],
+                notifications: [],
+                ratings: [],
+                auditLog: [],
+                revision: 1,
+              },
+            }),
+          };
+        if (endpoint === "/api/logout")
+          return new Promise((resolve) => {
+            finishLogout = resolve;
+          });
+        if (endpoint === "/api/workshops" && role === "staff")
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({ error: "CATALOG_OFFLINE" }),
+          };
+      },
+    });
+    const click = (selector) =>
+      ui.document
+        .querySelector(selector)
+        .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+    const open = () => {
+      click('[data-action="toggle-account-menu"]');
+      click('#account-dropdown [data-action="logout"]');
+    };
+    open();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(ui.document.querySelector("#confirm-root .confirm-dialog"));
+    assert.match(
+      ui.document.querySelector("#confirm-title").textContent,
+      /ออกจากระบบ/,
+    );
+    assert.equal(ui.calls.filter((path) => path === "/api/logout").length, 0);
+    click('[data-action="answer-no"]');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(ui.document.querySelector(".sidebar"));
+    assert.equal(ui.calls.filter((path) => path === "/api/logout").length, 0);
+    open();
+    click('[data-action="answer-yes"]');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      ui.document.querySelector("#toast-root .alert-toast").dataset.tone,
+      "info",
+    );
+    assert.ok(ui.document.querySelector(".sidebar"));
+    finishLogout({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: "LOGOUT_FAILED" }),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      ui.document.querySelector("#toast-root .alert-toast").dataset.tone,
+      "error",
+    );
+    assert.ok(
+      ui.document.querySelector(".sidebar"),
+      "a failed logout must keep the workspace available",
+    );
+    open();
+    click('[data-action="answer-yes"]');
+    await new Promise((resolve) => setImmediate(resolve));
+    click('#account-dropdown [data-action="logout"]');
+    assert.equal(
+      ui.calls.filter((path) => path === "/api/logout").length,
+      2,
+      "do not submit a second request while logout is pending",
+    );
+    finishLogout({ ok: true, json: async () => ({ ok: true }) });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ui.document.querySelector(".sidebar"), null);
+    assert.doesNotMatch(
+      ui.document.querySelector("#app").textContent,
+      /Private Member/,
+    );
+    assert.equal(
+      ui.document.querySelector("#toast-root .alert-toast").dataset.tone,
+      role === "staff" ? "warning" : "success",
+    );
+    assert.match(
+      ui.document.querySelector("#toast-root").textContent,
+      /ออกจากระบบ/,
+    );
+  });
 
 test("login modal opens the member workspace and logout clears private data", async () => {
   const account = {
@@ -985,6 +1961,9 @@ test("login modal opens the member workspace and logout clears private data", as
   document
     .querySelector('#account-dropdown [data-action="logout"]')
     .dispatchEvent(new window.Event("click", { bubbles: true }));
+  document
+    .querySelector('#confirm-root [data-action="answer-yes"]')
+    .dispatchEvent(new window.Event("click", { bubbles: true }));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(document.querySelector(".sidebar"), null);
   assert.doesNotMatch(document.querySelector("#app").textContent, /Member/);
@@ -1033,12 +2012,20 @@ test("signup keeps invalid input and returns to login after server acknowledgeme
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(form.querySelector('[name="email"]').value, "new@gmail.com");
   assert.match(form.querySelector(".error").textContent, /มีบัญชีแล้ว/);
+  assert.equal(
+    document.querySelector('#toast-root .alert-toast[data-tone="success"]'),
+    null,
+  );
   rejected = false;
   form.dispatchEvent(
     new window.Event("submit", { bubbles: true, cancelable: true }),
   );
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(document.querySelector("#register-form"), null);
+  assert.equal(document.querySelector("#auth-register-panel").hidden, true);
+  assert.equal(
+    document.querySelector('#register-form [name="password"]').value,
+    "",
+  );
   assert.equal(
     document.querySelector('#login-form [name="identity"]').value,
     "new@gmail.com",
@@ -1046,6 +2033,14 @@ test("signup keeps invalid input and returns to login after server acknowledgeme
   assert.match(
     document.querySelector("#modal-root").textContent,
     /สมัครสมาชิกสำเร็จ/,
+  );
+  assert.equal(
+    document.querySelector("#toast-root .alert-toast").dataset.tone,
+    "success",
+  );
+  assert.match(
+    document.querySelector("#toast-root").textContent,
+    /สร้างบัญชีสำเร็จ/,
   );
   const escape = new window.Event("keydown", {
     bubbles: true,
@@ -1055,6 +2050,103 @@ test("signup keeps invalid input and returns to login after server acknowledgeme
   document.querySelector("#login-form").dispatchEvent(escape);
   assert.equal(document.querySelector("#modal-root .dialog"), null);
   assert.equal(document.body.style.overflow, "");
+});
+
+test("recovery alerts follow server acknowledgements and keep failed OTP entry editable", async () => {
+  const pending = {};
+  const ui = await screen({
+    request: async (endpoint) => {
+      if (endpoint === "/api/session")
+        return {
+          ok: true,
+          json: async () => ({ user: null, passwordResetAvailable: true }),
+        };
+      if (
+        ["/api/otp/request", "/api/otp/verify", "/api/password/reset"].includes(
+          endpoint,
+        )
+      )
+        return new Promise((resolve) => {
+          pending[endpoint] = resolve;
+        });
+    },
+  });
+  const click = (selector) =>
+    ui.document
+      .querySelector(selector)
+      .dispatchEvent(new ui.window.Event("click", { bubbles: true }));
+  const submit = async (id) => {
+    ui.document
+      .querySelector(id)
+      .dispatchEvent(
+        new ui.window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const respond = async (endpoint, body, ok = true) => {
+    pending[endpoint]({ ok, status: ok ? 200 : 400, json: async () => body });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  click('[data-action="login"]');
+  click('[data-action="forgot"]');
+  ui.document.querySelector('#forgot-form [name="contact"]').value =
+    "reset@example.test";
+  await submit("#forgot-form");
+  assert.equal(ui.document.querySelector("#toast-root .alert-toast"), null);
+  await respond("/api/otp/request", {
+    challengeId: "test-challenge",
+    message: "OTP_REQUEST_ACCEPTED",
+  });
+  assert.ok(ui.document.querySelector("#otp-form"));
+  assert.equal(
+    ui.document.querySelector("#toast-root .alert-toast").dataset.tone,
+    "info",
+  );
+  assert.match(
+    ui.document.querySelector("#toast-root").textContent,
+    /OTP_REQUEST_ACCEPTED/,
+    "honor the server message without claiming that an unknown address received mail",
+  );
+  ui.document.querySelector('#otp-form [name="code"]').value = "123456";
+  await submit("#otp-form");
+  await respond("/api/otp/verify", { error: "INVALID_OTP" }, false);
+  assert.match(
+    ui.document.querySelector("#otp-form .error").textContent,
+    /INVALID_OTP/,
+  );
+  assert.equal(
+    ui.document.querySelector('#otp-form [name="code"]').value,
+    "123456",
+  );
+  assert.equal(
+    ui.document.querySelector("#toast-root .alert-toast").dataset.tone,
+    "info",
+  );
+  await submit("#otp-form");
+  await respond("/api/otp/verify", { grant: "test-reset-grant" });
+  assert.ok(ui.document.querySelector("#reset-form"));
+  assert.equal(
+    ui.document.querySelector("#toast-root .alert-toast").dataset.tone,
+    "success",
+  );
+  const password = "NewTestPassword123!";
+  ui.document.querySelector('#reset-form [name="password"]').value = password;
+  ui.document.querySelector('#reset-form [name="confirmation"]').value =
+    password;
+  await submit("#reset-form");
+  assert.doesNotMatch(
+    ui.document.querySelector("#toast-root").textContent,
+    /เปลี่ยนรหัสผ่านสำเร็จ/,
+  );
+  await respond("/api/password/reset", { ok: true });
+  assert.ok(ui.document.querySelector("#login-form"));
+  assert.match(
+    ui.document.querySelector("#toast-root").textContent,
+    /เปลี่ยนรหัสผ่านสำเร็จ/,
+  );
+  assert.ok(
+    !ui.document.querySelector("#toast-root").textContent.includes(password),
+  );
 });
 
 test("restored staff session can open member approvals from the existing workspace", async () => {
@@ -1188,6 +2280,214 @@ test("polling updates the account badge and workspace when database permissions 
     ),
   );
 });
+
+for (const role of ["user", "staff"])
+  test(`${role}: profile photo previews, cancels, retries and updates all avatars only after saving`, async () => {
+    const oldAvatar = "/api/avatars/photo-user?v=" + "a".repeat(64);
+    const newAvatar = "/api/avatars/photo-user?v=" + "b".repeat(64);
+    const account = {
+      id: "photo-user",
+      name: "Photo <Member>",
+      email: "photo@example.test",
+      code: "PHOTO",
+      phone: "0812345678",
+      role,
+      type: "นักศึกษา",
+      status: "APPROVED",
+      avatar: oldAvatar,
+    };
+    const store = {
+      users: [account],
+      workshops: [],
+      registrations: [],
+      notifications: [],
+      complaints: [],
+      ratings: [],
+      auditLog: [],
+      revision: 1,
+    };
+    const uploads = [];
+    let finishUpload;
+    const ui = await screen({
+      hash: "#dashboard",
+      request: (endpoint, options) => {
+        if (endpoint === "/api/session")
+          return {
+            ok: true,
+            json: async () => ({ user: account, csrf: "photo-test" }),
+          };
+        if (endpoint === "/api/store")
+          return {
+            ok: true,
+            json: async () => ({ store: structuredClone(store) }),
+          };
+        if (endpoint === "/api/account/avatar") {
+          const data = JSON.parse(options.body);
+          uploads.push(data);
+          return new Promise((resolve) => {
+            finishUpload = (fail = false) => {
+              if (fail)
+                return resolve({
+                  ok: false,
+                  status: 503,
+                  json: async () => ({ error: "บันทึกรูปไม่สำเร็จ" }),
+                });
+              account.avatar = data.image ? newAvatar : "";
+              resolve({
+                ok: true,
+                json: async () => ({
+                  user: account,
+                  store: structuredClone(store),
+                }),
+              });
+            };
+          });
+        }
+      },
+    });
+    const { document, window } = ui;
+    const click = (selector) =>
+      document
+        .querySelector(selector)
+        .dispatchEvent(new window.Event("click", { bubbles: true }));
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    const encoded = "data:image/jpeg;base64,/9j/AA==";
+    const drawn = [];
+    let decoder = async () => ({ width: 640, height: 480, close() {} });
+    window.createImageBitmap = (...args) => decoder(...args);
+    const create = document.createElement.bind(document);
+    document.createElement = (tag) => {
+      const element = create(tag);
+      if (tag === "canvas") {
+        element.getContext = () => ({
+          fillRect() {},
+          drawImage: (...args) => drawn.push(args.slice(1)),
+        });
+        element.toDataURL = () => encoded;
+      }
+      return element;
+    };
+    const choose = async (
+      file = { type: "image/png", size: 1000, name: "photo.png" },
+    ) => {
+      const input = document.querySelector("#account-photo-input");
+      Object.defineProperty(input, "files", {
+        value: [file],
+        configurable: true,
+      });
+      input.dispatchEvent(new window.Event("change", { bubbles: true }));
+      await tick();
+    };
+    click('[data-action="account-profile"]');
+    assert.equal(
+      document.querySelector(".account-profile-heading h3").textContent,
+      account.name,
+    );
+    assert.equal(
+      document.querySelector(".account-profile-heading h3 member"),
+      null,
+    );
+    assert.equal(
+      document.querySelector(".account-portrait img").getAttribute("src"),
+      oldAvatar,
+    );
+    await choose({ type: "image/svg+xml", size: 10, name: "bad.svg" });
+    assert.match(
+      document.querySelector("#account-photo-error").textContent,
+      /JPG/,
+    );
+    await choose({ type: "image/png", size: 4 * 1024 * 1024, name: "big.png" });
+    assert.match(
+      document.querySelector("#account-photo-error").textContent,
+      /3 MB/,
+    );
+    await choose();
+    assert.deepEqual(drawn[0], [80, 0, 480, 480, 0, 0, 320, 320]);
+    assert.equal(
+      document.querySelector(".account-portrait img").getAttribute("src"),
+      encoded,
+    );
+    assert.equal(
+      document.querySelector(".header-avatar img").getAttribute("src"),
+      oldAvatar,
+    );
+    assert.equal(uploads.length, 0);
+    click('[data-action="account-photo-cancel"]');
+    assert.equal(
+      document.querySelector(".account-portrait img").getAttribute("src"),
+      oldAvatar,
+    );
+    await choose();
+    click('[data-action="account-photo-save"]');
+    click('[data-action="account-photo-save"]');
+    await tick();
+    assert.equal(uploads.length, 1);
+    assert.equal(
+      document.querySelector('[data-action="account-photo-save"]').disabled,
+      true,
+    );
+    finishUpload(true);
+    await tick();
+    assert.match(
+      document.querySelector("#account-photo-error").textContent,
+      /ไม่สำเร็จ/,
+    );
+    assert.equal(
+      document.querySelector('[data-action="account-photo-save"]').disabled,
+      false,
+    );
+    click('[data-action="account-photo-save"]');
+    await tick();
+    finishUpload();
+    await tick();
+    for (const selector of [
+      ".header-avatar img",
+      ".profile-avatar img",
+      ".account-portrait img",
+    ])
+      assert.equal(
+        document.querySelector(selector).getAttribute("src"),
+        newAvatar,
+      );
+    assert.equal(
+      document.querySelector(".account-photo-preview-actions").hidden,
+      true,
+    );
+    click('[data-action="account-photo-remove"]');
+    assert.equal(document.querySelector(".account-portrait img"), null);
+    assert.equal(uploads.length, 2);
+    click('[data-action="account-photo-cancel"]');
+    assert.equal(
+      document.querySelector(".account-portrait img").getAttribute("src"),
+      newAvatar,
+    );
+    click('[data-action="account-photo-remove"]');
+    click('[data-action="account-photo-save"]');
+    await tick();
+    assert.deepEqual(uploads[2], { image: "" });
+    finishUpload();
+    await tick();
+    assert.equal(document.querySelector(".header-avatar img"), null);
+    let finishDecode;
+    decoder = () =>
+      new Promise((resolve) => {
+        finishDecode = resolve;
+      });
+    await choose();
+    click("#modal-root .close");
+    let closed = false;
+    finishDecode({
+      width: 100,
+      height: 100,
+      close() {
+        closed = true;
+      },
+    });
+    await tick();
+    assert.equal(document.querySelector("#account-profile"), null);
+    assert.equal(closed, true, "late decoded images are released");
+    assert.equal(uploads.length, 3);
+  });
 
 for (const [role, label] of [
   ["user", "ผู้เรียน"],
@@ -1904,7 +3204,7 @@ async function recordsScreen(role = "user", options = {}) {
   };
   const actions = [];
   const ui = await screen({
-    hash: role === "staff" ? "#complaints" : options.page || "#reports",
+    hash: options.page || (role === "staff" ? "#complaints" : "#reports"),
     simulateFocus: true,
     clock,
     request: async (endpoint, req) => {
@@ -2046,9 +3346,179 @@ test("member complaint inbox hides threads, opens details and supports trash and
   assert.equal(ui.document.querySelectorAll(".member-complaint-row").length, 0);
 });
 
+test("participant workshop cards search and paginate before opening an isolated roster and preserve the return position", async () => {
+  const ui = await recordsScreen("staff");
+  const requests = ui.calls.length;
+  ui.click('.side-nav [data-id="participants"]');
+  assert.equal(
+    ui.document.querySelectorAll(".participant-workshop-card").length,
+    12,
+  );
+  assert.equal(ui.document.querySelector(".participants-table"), null);
+  assert.equal(
+    ui.document.querySelector('[data-action="export-participants"]'),
+    null,
+  );
+  ui.click('[data-action="participant-workshop-page"][data-id="2"]');
+  assert.equal(
+    ui.document.querySelectorAll(".participant-workshop-card").length,
+    11,
+  );
+  const selected = ui.document.querySelector(".participant-workshop-open")
+    .dataset.id;
+  ui.click(`.participant-workshop-open[data-id="${selected}"]`);
+  assert.equal(
+    ui.document.querySelector("#participant-workshop-heading").textContent,
+    ui.store.workshops.find((w) => w.id === selected).title,
+  );
+  assert.equal(
+    ui.document.querySelectorAll(".participants-table tbody tr").length,
+    1,
+  );
+  ui.click('[data-action="participants-back"]');
+  assert.equal(
+    ui.document.querySelectorAll(".participant-workshop-card").length,
+    11,
+  );
+  assert.equal(ui.document.activeElement.dataset.id, selected);
+  ui.search("#participant-workshop-search", "เวิร์กช็อป 03");
+  assert.equal(
+    ui.document.querySelectorAll(".participant-workshop-card").length,
+    1,
+  );
+  ui.click('.participant-workshop-open[data-id="rw2"]');
+  assert.ok(ui.document.querySelector('[data-registration-id="rr2"]'));
+  assert.equal(ui.document.querySelector('[data-registration-id="rr1"]'), null);
+  ui.store.workshops = ui.store.workshops.filter((w) => w.id !== "rw2");
+  ui.store.registrations = ui.store.registrations.filter(
+    (r) => r.workshopId !== "rw2",
+  );
+  ui.store.revision++;
+  ui.document.body.focus();
+  await ui.poll();
+  assert.equal(
+    ui.document.querySelector(".participants-view").dataset.view,
+    "workshops",
+  );
+  assert.equal(ui.document.querySelector(".participants-table"), null);
+  assert.equal(
+    ui.document.querySelectorAll(".participant-workshop-card").length,
+    0,
+  );
+  assert.ok(
+    ui.calls.length > requests,
+    "only the explicit poll refreshes workspace data",
+  );
+});
+
+test("selected participant rosters paginate and filter within one workshop even when a person registered for another", async () => {
+  const ui = await recordsScreen("staff", {
+    page: "#participants?workshop=rw0",
+  });
+  assert.equal(
+    ui.document.querySelector("#participant-workshop-heading").textContent,
+    "เวิร์กช็อป 01",
+  );
+  for (let i = 0; i < 31; i++) {
+    ui.store.users.push({
+      id: "member-" + i,
+      name: "Member " + String(i).padStart(2, "0"),
+      code: "CODE-" + i,
+      email: "member" + i + "@example.test",
+      role: "user",
+      status: "APPROVED",
+    });
+    ui.store.registrations.push({
+      id: "member-reg-" + i,
+      userId: "member-" + i,
+      workshopId: "rw0",
+      status: "PENDING",
+    });
+  }
+  ui.store.registrations.push({
+    id: "foreign-member",
+    userId: "member-0",
+    workshopId: "rw1",
+    status: "ABSENT",
+  });
+  ui.store.revision++;
+  ui.document.body.focus();
+  await ui.poll();
+  assert.equal(
+    ui.document.querySelectorAll(".participants-table tbody tr").length,
+    25,
+  );
+  assert.equal(
+    ui.document
+      .querySelectorAll(".participant-roster-metrics dd")[0]
+      .textContent.trim(),
+    "32 คน",
+  );
+  ui.click('[data-action="participant-page"][data-id="2"]');
+  assert.equal(
+    ui.document.querySelectorAll(".participants-table tbody tr").length,
+    7,
+  );
+  assert.equal(
+    ui.document.querySelector(".participants-table tbody td").textContent,
+    "26",
+  );
+  ui.search("#participant-search", "Member 00");
+  assert.equal(
+    ui.document.querySelectorAll(".participants-table tbody tr").length,
+    1,
+  );
+  assert.ok(ui.document.querySelector('[data-registration-id="member-reg-0"]'));
+  assert.equal(
+    ui.document.querySelector('[data-registration-id="foreign-member"]'),
+    null,
+  );
+  ui.change("#participant-status", "ABSENT");
+  assert.equal(ui.document.querySelector(".participants-table"), null);
+  assert.equal(
+    ui.document.querySelector('[data-action="export-participants"]').disabled,
+    true,
+  );
+  ui.change("#participant-status", "PENDING");
+  assert.equal(
+    ui.document.querySelectorAll(".participants-table tbody tr").length,
+    1,
+  );
+  assert.equal(
+    ui.document
+      .querySelectorAll(".participant-roster-metrics dd")[0]
+      .textContent.trim(),
+    "32 คน",
+  );
+});
+
+test("missing participant deep links return to workshop selection instead of showing a combined roster", async () => {
+  const ui = await recordsScreen("staff", {
+    page: "#participants?workshop=removed",
+  });
+  assert.ok(ui.document.querySelector(".participant-workshop-grid"));
+  assert.equal(ui.document.querySelector(".participants-table"), null);
+});
+
 test("participant attendance uses a single status menu, preserves confirmation and locks finalized or cancelled rows", async () => {
   const ui = await recordsScreen("staff");
   ui.click('.side-nav [data-id="participants"]');
+  assert.ok(ui.document.querySelector(".participant-workshop-grid"));
+  assert.equal(ui.document.querySelector(".participants-table"), null);
+  const open = (id) => {
+    if (ui.document.querySelector('[data-action="participants-back"]'))
+      ui.click('[data-action="participants-back"]');
+    ui.search(
+      "#participant-workshop-search",
+      ui.store.workshops.find((w) => w.id === id).title,
+    );
+    ui.click(`.participant-workshop-open[data-id="${id}"]`);
+    assert.equal(
+      ui.document.querySelector("#participant-workshop-heading").textContent,
+      ui.store.workshops.find((w) => w.id === id).title,
+    );
+  };
+  open("rw1");
   assert.equal(
     ui.document.querySelectorAll(".participants-table th").length,
     4,
@@ -2066,13 +3536,12 @@ test("participant attendance uses a single status menu, preserves confirmation a
     ).length,
     2,
   );
-  ui.click('[data-action="attendance-menu"][data-id="rr0"]');
-  assert.equal(
-    ui.document
-      .querySelector('[data-id="rr1"][data-action="attendance-menu"]')
-      .getAttribute("aria-expanded"),
-    "false",
+  const previousTrigger = ui.document.querySelector(
+    '[data-id="rr1"][data-action="attendance-menu"]',
   );
+  open("rw0");
+  ui.click('[data-action="attendance-menu"][data-id="rr0"]');
+  assert.equal(previousTrigger.getAttribute("aria-expanded"), "false");
   assert.equal(
     ui.document
       .querySelector('#workshop-actions-menu [data-action="attend"]')
@@ -2094,6 +3563,7 @@ test("participant attendance uses a single status menu, preserves confirmation a
     .dispatchEvent(escape);
   assert.ok(!ui.document.querySelector("#workshop-actions-menu"));
   assert.equal(ui.document.activeElement?.dataset.id, "rr0");
+  open("rw1");
   ui.click('[data-action="attendance-menu"][data-id="rr1"]');
   ui.click('#workshop-actions-menu [data-action="attend"]');
   assert.ok(ui.document.querySelector('[data-action="confirmed-attend"]'));
@@ -2115,6 +3585,11 @@ test("participant attendance uses a single status menu, preserves confirmation a
       .textContent,
     /เข้าร่วม/,
   );
+  open("rw3");
+  assert.match(
+    ui.document.querySelector(".participants-table").textContent,
+    /ยกเลิก/,
+  );
   assert.ok(
     !ui.document.querySelector(
       '[data-action="attendance-menu"][data-id="rr3"]',
@@ -2125,6 +3600,7 @@ test("participant attendance uses a single status menu, preserves confirmation a
   ui.store.revision++;
   ui.document.body.focus();
   await ui.poll();
+  open("rw0");
   assert.ok(
     !ui.document.querySelector(
       '[data-action="attendance-menu"][data-id="rr0"]',

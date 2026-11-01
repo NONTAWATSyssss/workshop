@@ -58,20 +58,15 @@ export function createManagementViews(context) {
           timeZone: "UTC",
           month: "short",
         }),
-        year: date.toLocaleDateString("th-TH", {
-          timeZone: "UTC",
-          year: "2-digit",
-        }),
+        year: String(date.getUTCFullYear() + 543),
         fullLabel: monthLabel(+date, true),
         value: byMonth.get(key) || 0,
       };
     });
     const maxValue = Math.max(1, ...trend.map((item) => item.value));
+    const scaleStep = Math.pow(10, Math.floor(Math.log10(maxValue)));
     const ceiling =
-      maxValue <= 5
-        ? 5
-        : Math.ceil(maxValue / Math.pow(10, Math.floor(Math.log10(maxValue)))) *
-          Math.pow(10, Math.floor(Math.log10(maxValue)));
+      maxValue <= 4 ? 4 : Math.ceil(maxValue / (2 * scaleStep)) * 2 * scaleStep;
     const attended = registrations.filter(
       (r) => r.status === "ATTENDED",
     ).length;
@@ -114,6 +109,34 @@ export function createManagementViews(context) {
     const taskSection = taskItems
       ? `<section class="staff-tasks" aria-label="งานค้างปัจจุบัน"><h2>งานค้างปัจจุบัน</h2><div class="staff-task-list">${taskItems}</div></section>`
       : '<div class="staff-all-clear"><i class="fa-solid fa-circle-check" aria-hidden="true"></i> ไม่มีงานค้าง</div>';
+    const summary = [
+      [
+        "registrations",
+        "fa-arrow-right-to-bracket",
+        "รายการลงทะเบียน",
+        registrations.length,
+        "ไม่รวมรายการที่ยกเลิก",
+      ],
+      [
+        "recorded",
+        "fa-clipboard-check",
+        "บันทึกผลแล้ว",
+        recorded,
+        `เข้าร่วม ${number(attended)} · ไม่เข้าร่วม ${number(absent)}`,
+      ],
+      [
+        "pending",
+        "fa-hourglass-half",
+        "รอบันทึกผล",
+        pending,
+        "ยังไม่นำมาคำนวณอัตราเข้าร่วม",
+      ],
+    ]
+      .map(
+        ([key, icon, label, count, note]) =>
+          `<div class="staff-summary-item" data-metric="${key}"><dt><span class="staff-summary-icon" aria-hidden="true"><i class="fa-solid ${icon}"></i></span>${label}</dt><dd><strong>${number(count)}</strong><span>รายการ</span><small>${note}</small></dd></div>`,
+      )
+      .join("");
     const ongoing = (w) =>
       +archiveDate(w.start) <= now && +archiveDate(w.end) > now;
     const current = store.workshops
@@ -143,25 +166,25 @@ export function createManagementViews(context) {
           closed: "ปิดรับสมัคร",
           upcoming: "กำลังจะมาถึง",
         }[status];
-        return `<tr data-workshop-id="${esc(w.id)}"><td data-label="กิจกรรม"><strong>${esc(w.title)}</strong></td><td data-label="วันเวลา"><time datetime="${esc(w.start)}">${esc(archiveDateLabel(w.start))}</time></td><td data-label="ผู้ลงทะเบียน / ที่นั่ง">${number(occupancy(w.id))} / ${number(w.capacity)}</td><td data-label="สถานะ"><span class="staff-phase is-${status}">${label}</span></td><td><button type="button" class="btn small" data-action="participants-for" data-id="${esc(w.id)}" aria-label="ดูผู้เข้าร่วม ${esc(w.title)}">ดูผู้เข้าร่วม</button></td></tr>`;
+        return `<tr data-workshop-id="${esc(w.id)}"><td data-label="กิจกรรม"><div class="staff-agenda-workshop"><span class="staff-agenda-thumb" aria-hidden="true">${w.cover ? `<img src="${esc(w.cover)}" alt="" width="44" height="44" loading="lazy" decoding="async">` : '<i class="fa-regular fa-calendar"></i>'}</span><div><strong>${esc(w.title)}</strong><span class="staff-agenda-place">${esc(w.place || "ยังไม่ระบุสถานที่")}</span></div></div></td><td data-label="วันเวลา" class="staff-agenda-date"><time datetime="${esc(w.start)}">${esc(archiveDateLabel(w.start))}</time><span>ถึง ${esc(archiveDateLabel(w.end))}</span></td><td data-label="ลงทะเบียน"><span class="staff-agenda-seats"><strong>${number(occupancy(w.id))}</strong><span>/ ${number(w.capacity)}</span></span></td><td data-label="สถานะ"><span class="staff-phase is-${status}">${label}</span></td><td><button type="button" class="btn small" data-action="participants-for" data-id="${esc(w.id)}" aria-label="ดูผู้เข้าร่วม ${esc(w.title)}">ดูผู้เข้าร่วม <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></td></tr>`;
       })
       .join("");
     const bars = trend
       .map(
         (item) =>
-          `<div class="staff-trend-item ${item.value ? "" : "is-zero"}"><button type="button" class="staff-month-bar" data-action="dashboard-month-info" data-label="${esc(item.fullLabel)}" data-count="${item.value}" aria-label="${esc(item.fullLabel)}: ${number(item.value)} รายการ"><span class="staff-trend-bar"><span class="staff-bar-fill" style="height:${(item.value / ceiling) * 100}%"><span class="staff-bar-value">${number(item.value)}</span></span></span></button><span class="staff-month-label">${esc(item.label)}<small>${esc(item.year)}</small></span></div>`,
+          `<div class="staff-trend-item ${item.value ? "" : "is-zero"} ${item.key === trend[trend.length - 1].key ? "is-current" : ""}"><button type="button" class="staff-month-bar" data-action="dashboard-month-info" data-label="${esc(item.fullLabel)}" data-count="${item.value}" aria-label="${esc(item.fullLabel)}: ${number(item.value)} รายการ"><span class="staff-trend-bar"><span class="staff-bar-fill" style="height:${(item.value / ceiling) * 100}%"><span class="staff-bar-value">${number(item.value)}</span></span></span></button><span class="staff-month-label">${esc(item.label)}<small>${esc(item.year)}</small></span></div>`,
       )
       .join("");
     const graph = registrations.length
       ? `<div class="staff-trend-plot" data-months="${months}"><div class="staff-chart-axis" aria-hidden="true"><span>${number(ceiling)}</span><span>${number(ceiling / 2)}</span><span>0</span></div><div class="staff-trend-chart" style="--trend-count:${months}" role="group" aria-label="รายการลงทะเบียนรายเดือน">${bars}</div></div><p class="staff-chart-footnote">แตะหรือชี้แท่งกราฟเพื่อดูจำนวนรายการ</p>`
       : '<div class="staff-empty"><i class="fa-solid fa-chart-column" aria-hidden="true"></i><strong>ยังไม่มีรายการลงทะเบียนในช่วงนี้</strong><span>ข้อมูลจะแสดงเมื่อมีการลงทะเบียน</span></div>';
     const ring = `<div class="staff-donut" role="img" aria-label="${recorded ? `เข้าร่วมแล้ว ${number(attended)} จาก ${number(recorded)} รายการ คิดเป็น ${percentLabel}` : "ยังไม่มีรายการที่บันทึกผลแล้ว"}" style="background:${recorded ? `conic-gradient(var(--staff-attended) 0% ${percent}%, var(--staff-absent) ${percent}% 100%)` : "var(--staff-chart-track)"}"><div class="staff-donut-value"><strong>${percentLabel}</strong><span>${recorded ? "เข้าร่วมจริง" : "ยังไม่มีผล"}</span></div></div>`;
-    return `<div class="staff-dashboard"><div class="staff-dashboard-head"><div>${title("STAFF OVERVIEW", "ภาพรวมการอบรม", "ติดตามการลงทะเบียน ผลการเข้าร่วม และงานที่ต้องดำเนินการ")}</div><div class="staff-dashboard-meta"><span class="live-dot" aria-hidden="true"></span><span class="sync" data-sync-status role="status">${esc(context.syncMessage)}</span></div></div>
-      ${taskSection}
-      <section class="staff-report" aria-label="สรุปการลงทะเบียนและผลเข้าร่วม"><div class="staff-report-heading"><div><h2>สรุปการอบรม</h2><p>${esc(periodLabel)} · นับตามวันที่ลงทะเบียน · ไม่รวมรายการที่ยกเลิก</p></div><label class="staff-period-label" for="dashboard-period">ช่วงข้อมูลของทั้ง 2 กราฟ<select id="dashboard-period"><option value="6" ${months === 6 ? "selected" : ""}>6 เดือนล่าสุด</option><option value="12" ${months === 12 ? "selected" : ""}>12 เดือนล่าสุด</option></select></label></div>
-      <div class="staff-dashboard-grid"><section class="panel staff-trend-panel" aria-labelledby="staff-trend-heading"><div class="staff-panel-heading"><div><h3 id="staff-trend-heading">การลงทะเบียนรายเดือน</h3><p>รวม <strong class="staff-registration-total">${number(registrations.length)}</strong> รายการในช่วงที่เลือก</p></div><span class="staff-chart-unit">หน่วย: รายการ</span></div>${graph}</section>
-      <section class="panel staff-donut-panel" aria-labelledby="staff-outcome-heading"><div class="staff-panel-heading"><div><h3 id="staff-outcome-heading">ผลการเข้าร่วม</h3><p>เฉพาะรายการที่บันทึกผลแล้ว</p></div></div>${ring}${recorded ? `<dl class="staff-outcome-legend"><div><dt><i class="is-attended" aria-hidden="true"></i>เข้าร่วมแล้ว</dt><dd>${number(attended)} <small>รายการ</small></dd></div><div><dt><i class="is-absent" aria-hidden="true"></i>ไม่เข้าร่วม</dt><dd>${number(absent)} <small>รายการ</small></dd></div></dl><p class="staff-chart-footnote">คำนวณจาก ${number(recorded)} รายการที่มีผลแล้ว</p>` : '<p class="staff-outcome-empty">ยังคำนวณอัตราเข้าร่วมไม่ได้</p>'}${pending ? `<p class="staff-outcome-pending">ยังไม่มีผลการเข้าร่วม ${number(pending)} รายการ<br><span>ไม่นำมาคำนวณเปอร์เซ็นต์</span></p>` : ""}</section></div></section>
-      <details class="staff-activity-details" id="staff-upcoming-details" ${state.dashboardAgendaOpen ? "open" : ""}><summary><span><i class="fa-regular fa-calendar" aria-hidden="true"></i> กิจกรรมปัจจุบันและกิจกรรมถัดไป</span><span class="staff-activity-count">${number(current.length)} กิจกรรม</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary><div class="staff-activity-content"><div class="staff-activity-toolbar"><span>ข้อมูลปัจจุบัน${current.length > 5 ? ` · แสดง 5 จาก ${number(current.length)} กิจกรรม` : ""}</span><button class="btn small" data-action="page" data-id="manage">จัดการเวิร์กช็อปทั้งหมด</button></div>${table ? `<div class="staff-table-wrap"><table class="staff-table"><thead><tr><th scope="col">กิจกรรม</th><th scope="col">วันเวลา</th><th scope="col">ผู้ลงทะเบียน / ที่นั่ง</th><th scope="col">สถานะ</th><th scope="col"><span class="staff-sr-only">เปิดรายชื่อ</span></th></tr></thead><tbody>${table}</tbody></table></div>` : '<p class="staff-empty-note">ยังไม่มีกิจกรรมปัจจุบันหรือกิจกรรมถัดไป</p>'}</div></details></div>`;
+    return `<div class="staff-dashboard"><div class="staff-dashboard-head"><div>${title("STAFF OVERVIEW", "ภาพรวมการอบรม", "ติดตามการลงทะเบียน ผลการเข้าร่วม และงานที่ต้องดำเนินการ")}</div><div class="staff-dashboard-status">${taskSection}<div class="staff-dashboard-meta"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i><span data-sync-status role="status">${esc(context.syncMessage)}</span></div></div></div>
+      <section class="staff-report" aria-label="สรุปการลงทะเบียนและผลเข้าร่วม"><div class="staff-report-heading"><div><h2>สรุปการอบรม</h2><p>${esc(periodLabel)} · นับตามวันที่ลงทะเบียน · ไม่รวมรายการที่ยกเลิก</p></div><label class="staff-period-label" for="dashboard-period">ช่วงข้อมูลสรุปและกราฟ<select id="dashboard-period"><option value="6" ${months === 6 ? "selected" : ""}>6 เดือนล่าสุด</option><option value="12" ${months === 12 ? "selected" : ""}>12 เดือนล่าสุด</option></select></label></div>
+      <dl class="staff-summary" aria-label="ยอดสรุปในช่วงที่เลือก">${summary}</dl>
+      <div class="staff-dashboard-grid"><section class="panel staff-trend-panel" aria-labelledby="staff-trend-heading"><div class="staff-panel-heading"><div><h3 id="staff-trend-heading">การลงทะเบียนรายเดือน</h3><p>ภาพรวมจำนวนรายการในแต่ละเดือน</p></div><span class="staff-chart-unit">รายการ</span></div>${graph}</section>
+      <section class="panel staff-donut-panel" aria-labelledby="staff-outcome-heading"><div class="staff-panel-heading"><div><h3 id="staff-outcome-heading">ผลการเข้าร่วม</h3><p>อัตราเข้าร่วมจากรายการที่บันทึกผลแล้ว</p></div><span class="staff-outcome-icon" aria-hidden="true"><i class="fa-solid fa-chart-pie"></i></span></div><div class="staff-outcome-body">${ring}<div class="staff-outcome-detail">${recorded ? `<dl class="staff-outcome-legend"><div><dt><i class="is-attended" aria-hidden="true"></i>เข้าร่วมแล้ว</dt><dd>${number(attended)} <small>รายการ</small></dd></div><div><dt><i class="is-absent" aria-hidden="true"></i>ไม่เข้าร่วม</dt><dd>${number(absent)} <small>รายการ</small></dd></div></dl><p class="staff-chart-footnote">บันทึกผลแล้ว ${number(recorded)} รายการ</p>` : '<p class="staff-outcome-empty">ยังไม่มีผลการเข้าร่วม<br><span>อัตราเข้าร่วมจะแสดงเมื่อบันทึกผลแล้ว</span></p>'}</div></div><div class="staff-outcome-footer">${pending ? `<span class="staff-outcome-pending"><i class="fa-regular fa-clock" aria-hidden="true"></i> รอบันทึกผล <strong>${number(pending)}</strong> รายการ</span><span>ไม่นำมาคำนวณเปอร์เซ็นต์</span>` : `<span><i class="fa-solid fa-circle-check" aria-hidden="true"></i> ${recorded ? "บันทึกผลครบทุกรายการในช่วงนี้" : "ยังไม่มีรายการให้บันทึกผล"}</span>`}</div></section></div></section>
+      <details class="staff-activity-details" id="staff-upcoming-details" ${state.dashboardAgendaOpen ? "open" : ""}><summary><span class="staff-agenda-icon" aria-hidden="true"><i class="fa-regular fa-calendar"></i></span><span class="staff-agenda-heading"><strong>กิจกรรมปัจจุบันและกิจกรรมถัดไป</strong><small>ติดตามกำหนดการและเปิดรายชื่อผู้เข้าร่วม</small></span><span class="staff-activity-count"><b>${number(current.length)}</b> กิจกรรม</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary><div class="staff-activity-content"><div class="staff-activity-toolbar"><span>แสดง ${number(Math.min(5, current.length))} จาก ${number(current.length)} กิจกรรม · เรียงตามกำหนดเริ่ม</span><button type="button" class="btn small" data-action="page" data-id="manage" aria-label="จัดการเวิร์คช็อปทั้งหมด">จัดการทั้งหมด <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div>${table ? `<div class="staff-table-wrap"><table class="staff-table"><thead><tr><th scope="col">กิจกรรม / สถานที่</th><th scope="col">วันเวลา</th><th scope="col">ลงทะเบียน / ที่นั่ง</th><th scope="col">สถานะ</th><th scope="col"><span class="staff-sr-only">เปิดรายชื่อ</span></th></tr></thead><tbody>${table}</tbody></table></div>` : '<p class="staff-empty-note">ยังไม่มีกิจกรรมปัจจุบันหรือกิจกรรมถัดไป</p>'}</div></details></div>`;
   }
 
   function downloadCsv(filename, rows) {
@@ -504,16 +527,15 @@ export function createManagementViews(context) {
     mountActionMenu(button, content, `บันทึกผลการเข้าร่วม ${name}`);
   }
 
-  function participantsV2() {
-    const selectedWorkshop = store.workshops.find(
-      (w) => w.id === state.participantWorkshop,
-    );
-    const query = state.participantQuery.toLowerCase();
-    const list = store.registrations.filter((r) => {
-      const u = store.users.find((x) => x.id === r.userId);
+  function participantRows() {
+    if (!store.workshops.some((w) => w.id === state.participantWorkshop))
+      return [];
+    const query = (state.participantQuery || "").trim().toLowerCase();
+    const users = new Map(store.users.map((u) => [u.id, u]));
+    return store.registrations.filter((r) => {
+      const u = users.get(r.userId);
       return (
-        (state.participantWorkshop === "all" ||
-          r.workshopId === state.participantWorkshop) &&
+        r.workshopId === state.participantWorkshop &&
         (state.participantStatus === "all" ||
           r.status === state.participantStatus) &&
         (!query ||
@@ -522,23 +544,118 @@ export function createManagementViews(context) {
             .includes(query))
       );
     });
-    return `${title("PARTICIPANT LIST", "รายชื่อผู้เข้าร่วมอบรม", "ค้นหา กรอง และบันทึกผลการเข้าร่วมจากรายการจริง")}${attendancePanel(selectedWorkshop)}<div class="staff-work-toolbar staff-filter-grid participants-filter-grid"><input id="participant-search" type="search" aria-label="ค้นหาผู้เข้าร่วม" placeholder="ค้นหาชื่อหรือรหัสนักศึกษา" value="${esc(state.participantQuery)}"><select id="participant-filter" aria-label="เลือกเวิร์กช็อป"><option value="all">ทุกเวิร์กช็อป</option>${store.workshops.map((w) => `<option value="${w.id}" ${state.participantWorkshop === w.id ? "selected" : ""}>${esc(w.title)} · ${esc(fmt(w.start))}${w.attendanceFinalizedAt ? " · ยืนยันผลแล้ว" : ""}</option>`).join("")}</select><select id="participant-status" aria-label="กรองสถานะ"><option value="all" ${state.participantStatus === "all" ? "selected" : ""}>ทุกสถานะ</option><option value="PENDING" ${state.participantStatus === "PENDING" ? "selected" : ""}>รอบันทึกผล</option><option value="ATTENDED" ${state.participantStatus === "ATTENDED" ? "selected" : ""}>เข้าร่วมแล้ว</option><option value="ABSENT" ${state.participantStatus === "ABSENT" ? "selected" : ""}>ไม่เข้าร่วม</option><option value="CANCELLED" ${state.participantStatus === "CANCELLED" ? "selected" : ""}>ยกเลิก</option></select><button class="btn small staff-filter-export" data-action="export-participants"><i class="fa-solid fa-download" aria-hidden="true"></i> Export CSV</button></div>${
+  }
+
+  function participantStage(w) {
+    if (w.attendanceFinalizedAt)
+      return { key: "finalized", label: "ยืนยันผลแล้ว", rank: 3 };
+    if (w.cancelled)
+      return { key: "cancelled", label: "ยกเลิกกิจกรรม", rank: 4 };
+    if (+archiveDate(w.end) <= Date.now())
+      return { key: "pending", label: "รอบันทึก / ยืนยันผล", rank: 0 };
+    if (+archiveDate(w.start) <= Date.now())
+      return { key: "active", label: "กำลังดำเนินการ", rank: 1 };
+    return { key: "upcoming", label: "กิจกรรมถัดไป", rank: 2 };
+  }
+
+  function participantPager(page, pages, action, label) {
+    if (pages <= 1) return "";
+    return `<nav class="participant-pagination" aria-label="${label}"><button type="button" class="btn small" data-action="${action}" data-id="${page - 1}" ${page <= 1 ? "disabled" : ""}><i class="fa-solid fa-chevron-left" aria-hidden="true"></i> ก่อนหน้า</button><span>หน้า <b>${number(page)}</b> / ${number(pages)}</span><button type="button" class="btn small" data-action="${action}" data-id="${page + 1}" ${page >= pages ? "disabled" : ""}>ถัดไป <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button></nav>`;
+  }
+
+  function participantWorkshopIndex() {
+    const query = (state.participantWorkshopQuery || "").trim().toLowerCase();
+    const stats = new Map();
+    for (const r of store.registrations) {
+      if (r.status === "CANCELLED") continue;
+      const item = stats.get(r.workshopId) || {
+        total: 0,
+        completed: 0,
+        pending: 0,
+      };
+      item.total++;
+      if (["ATTENDED", "ABSENT"].includes(r.status)) item.completed++;
+      else item.pending++;
+      stats.set(r.workshopId, item);
+    }
+    const list = store.workshops
+      .filter(
+        (w) =>
+          !query || `${w.title} ${w.place || ""}`.toLowerCase().includes(query),
+      )
+      .map((w) => ({
+        w,
+        stage: participantStage(w),
+        stats: stats.get(w.id) || { total: 0, completed: 0, pending: 0 },
+      }))
+      .sort(
+        (a, b) =>
+          a.stage.rank - b.stage.rank ||
+          +archiveDate(a.w.start) - +archiveDate(b.w.start) ||
+          a.w.id.localeCompare(b.w.id),
+      );
+    const pages = Math.max(1, Math.ceil(list.length / 12));
+    const page = (state.participantWorkshopPage = Math.min(
+      pages,
+      Math.max(1, Number(state.participantWorkshopPage) || 1),
+    ));
+    const cards = list
+      .slice((page - 1) * 12, page * 12)
+      .map(
+        ({ w, stage, stats }) =>
+          `<article class="card participant-workshop-card"><button type="button" class="participant-workshop-open" data-action="participants-for" data-id="${esc(w.id)}" aria-label="ดูรายชื่อผู้เข้าร่วม ${esc(w.title)}"><span class="participant-workshop-cover">${w.cover ? `<img src="${esc(w.cover)}" alt="" width="640" height="320" loading="lazy" decoding="async">` : '<i class="fa-solid fa-graduation-cap" aria-hidden="true"></i>'}<span class="participant-workshop-state" data-state="${stage.key}">${stage.label}</span></span><span class="participant-workshop-body"><strong class="participant-workshop-title">${esc(w.title)}</strong><span class="participant-workshop-meta"><span><i class="fa-regular fa-calendar" aria-hidden="true"></i>${esc(fmt(w.start))}</span><span><i class="fa-solid fa-location-dot" aria-hidden="true"></i>${esc(w.place || "ยังไม่ระบุสถานที่")}</span></span><span class="participant-workshop-metrics"><span><b>${number(stats.total)}</b><span>ผู้ลงทะเบียน</span></span><span><b>${number(stats.completed)}</b><span>บันทึกผลแล้ว</span></span><span><b>${number(stats.pending)}</b><span>ยังไม่บันทึกผล</span></span></span><span class="participant-workshop-link">ดูรายชื่อผู้เข้าร่วม <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></span></span></button></article>`,
+      )
+      .join("");
+    return `<section class="participants-view" data-view="workshops">${title("PARTICIPANTS", "ผู้เข้าร่วมอบรม", "เลือกเวิร์คช็อปเพื่อดูรายชื่อและบันทึกผลการเข้าร่วม")}<label class="participant-workshop-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="participant-workshop-search" type="search" placeholder="ค้นหาชื่อเวิร์คช็อปหรือสถานที่" aria-label="ค้นหาเวิร์คช็อปสำหรับดูรายชื่อ" value="${esc(state.participantWorkshopQuery || "")}"></label><div class="participant-workshop-results"><span>${number(list.length)} เวิร์คช็อป${list.length ? ` · แสดง ${number((page - 1) * 12 + 1)}–${number(Math.min(page * 12, list.length))}` : ""}</span><span>กิจกรรมรอบันทึกผลแสดงก่อน</span></div>${cards ? `<div class="participant-workshop-grid">${cards}</div>` : empty(query ? "ไม่พบเวิร์คช็อปที่ตรงกับคำค้นหา" : "ยังไม่มีเวิร์คช็อปให้แสดง")}${participantPager(page, pages, "participant-workshop-page", "หน้าเวิร์คช็อป")}</section>`;
+  }
+
+  function participantsV2() {
+    const selectedWorkshop = store.workshops.find(
+      (w) => w.id === state.participantWorkshop,
+    );
+    if (!selectedWorkshop) {
+      state.participantWorkshop = "all";
+      return participantWorkshopIndex();
+    }
+    const list = participantRows();
+    const users = new Map(store.users.map((u) => [u.id, u]));
+    const allRows = store.registrations.filter(
+      (r) => r.workshopId === selectedWorkshop.id,
+    );
+    const stats = attendanceStats(selectedWorkshop);
+    const pages = Math.max(1, Math.ceil(list.length / 25));
+    const page = (state.participantPage = Math.min(
+      pages,
+      Math.max(1, Number(state.participantPage) || 1),
+    ));
+    const stage = participantStage(selectedWorkshop);
+    const header = `<section class="participant-workshop-header" aria-labelledby="participant-workshop-heading"><div class="participant-workshop-identity">${selectedWorkshop.cover ? `<img src="${esc(selectedWorkshop.cover)}" alt="" width="96" height="80" decoding="async">` : '<span class="participant-roster-placeholder" aria-hidden="true"><i class="fa-solid fa-graduation-cap"></i></span>'}<div><span class="participant-selected-label">เวิร์คช็อปที่เลือก</span><h2 id="participant-workshop-heading">${esc(selectedWorkshop.title)}</h2><p><i class="fa-regular fa-calendar" aria-hidden="true"></i> ${esc(fmt(selectedWorkshop.start))} – ${esc(fmt(selectedWorkshop.end))}</p><p><i class="fa-solid fa-location-dot" aria-hidden="true"></i> ${esc(selectedWorkshop.place || "ยังไม่ระบุสถานที่")}</p></div><span class="participant-workshop-state" data-state="${stage.key}">${stage.label}</span></div><dl class="participant-roster-metrics">${[
+      ["ผู้ลงทะเบียน", stats.total],
+      ["รอบันทึกผล", stats.pending],
+      ["เข้าร่วมแล้ว", allRows.filter((r) => r.status === "ATTENDED").length],
+      ["ไม่เข้าร่วม", allRows.filter((r) => r.status === "ABSENT").length],
+    ]
+      .map(
+        ([label, value]) =>
+          `<div><dt>${label}</dt><dd>${number(value)} <span>คน</span></dd></div>`,
+      )
+      .join("")}</dl></section>`;
+    return `<section class="participants-view" data-view="roster">${title("PARTICIPANT LIST", "รายชื่อผู้เข้าร่วมอบรม", "แสดงรายชื่อเฉพาะเวิร์คช็อปที่เลือก", '<button type="button" class="btn participant-back" data-action="participants-back"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> เลือกเวิร์คช็อปอื่น</button>')}${header}${attendancePanel(selectedWorkshop)}<div class="staff-work-toolbar staff-filter-grid participant-roster-filters"><input id="participant-search" type="search" aria-label="ค้นหาผู้เข้าร่วม" placeholder="ค้นหาชื่อ รหัสประจำตัว หรืออีเมล" value="${esc(state.participantQuery)}"><select id="participant-status" aria-label="กรองสถานะ"><option value="all" ${state.participantStatus === "all" ? "selected" : ""}>ทุกสถานะ</option><option value="PENDING" ${state.participantStatus === "PENDING" ? "selected" : ""}>รอบันทึกผล</option><option value="ATTENDED" ${state.participantStatus === "ATTENDED" ? "selected" : ""}>เข้าร่วมแล้ว</option><option value="ABSENT" ${state.participantStatus === "ABSENT" ? "selected" : ""}>ไม่เข้าร่วม</option><option value="CANCELLED" ${state.participantStatus === "CANCELLED" ? "selected" : ""}>ยกเลิก</option></select><button type="button" class="btn small" data-action="export-participants" ${list.length ? "" : "disabled"}><i class="fa-solid fa-download" aria-hidden="true"></i> Export CSV</button></div><p class="participant-roster-count" role="status">${list.length ? `แสดง ${number((page - 1) * 25 + 1)}–${number(Math.min(page * 25, list.length))} จาก ${number(list.length)} รายการ` : "ไม่พบรายชื่อ"} · เฉพาะเวิร์คช็อปนี้${state.participantStatus === "all" ? " · รวมรายการยกเลิก" : ""}</p>${
       list.length
-        ? `<div class="panel tablewrap participants-table-wrap"><table class="participants-table"><caption class="sr-only">รายชื่อผู้เข้าร่วม กดป้ายสถานะเพื่อเลือกผลการเข้าร่วม</caption><thead><tr><th>ลำดับ</th><th>ชื่อ-นามสกุล</th><th>รหัสประจำตัว</th><th>สถานะ <span class="participant-status-hint">กดเพื่อบันทึกผล</span></th></tr></thead><tbody>${list
+        ? `<div class="panel tablewrap participants-table-wrap"><table class="participants-table"><caption class="sr-only">${esc(selectedWorkshop.title)} · รายชื่อผู้เข้าร่วม กดป้ายสถานะเพื่อเลือกผลการเข้าร่วม</caption><thead><tr><th>ลำดับ</th><th>ชื่อ-นามสกุล</th><th>รหัสประจำตัว</th><th>สถานะ <span class="participant-status-hint">${selectedWorkshop.attendanceFinalizedAt ? "ยืนยันผลแล้ว · อ่านอย่างเดียว" : "กดเพื่อบันทึกผล"}</span></th></tr></thead><tbody>${list
+            .slice((page - 1) * 25, page * 25)
             .map((r, i) => {
-              const u = store.users.find((x) => x.id === r.userId);
-              const finalized = store.workshops.find(
-                (w) => w.id === r.workshopId,
-              )?.attendanceFinalizedAt;
+              const u = users.get(r.userId);
+              const finalized = selectedWorkshop.attendanceFinalizedAt;
               const status =
                 finalized || r.status === "CANCELLED"
                   ? `${badge(r.status)}${finalized ? '<span class="participant-locked"><i class="fa-solid fa-lock" aria-hidden="true"></i> ยืนยันผลแล้ว</span>' : ""}`
                   : `<button type="button" class="participant-status-trigger" data-action="attendance-menu" data-id="${esc(r.id)}" aria-label="บันทึกผลการเข้าร่วม ${esc(u?.name || "ผู้เข้าร่วม")}" aria-haspopup="menu" aria-expanded="false" aria-controls="workshop-actions-menu" ${context.apiSaveCount ? "disabled" : ""}>${badge(r.status)}<i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>`;
-              return `<tr><td>${i + 1}</td><td><b>${esc(u?.name || "ไม่พบข้อมูล")}</b></td><td>${esc(u?.code || "—")}</td><td>${status}</td></tr>`;
+              return `<tr data-registration-id="${esc(r.id)}"><td>${number((page - 1) * 25 + i + 1)}</td><td><b>${esc(u?.name || "ไม่พบข้อมูล")}</b></td><td>${esc(u?.code || "—")}</td><td>${status}</td></tr>`;
             })
             .join("")}</tbody></table></div>`
         : empty("ยังไม่มีรายชื่อที่ตรงกับตัวกรอง")
-    }`;
+    }${participantPager(page, pages, "participant-page", "หน้ารายชื่อผู้เข้าร่วม")}</section>`;
   }
 
   const archiveMonths = [
@@ -579,6 +696,7 @@ export function createManagementViews(context) {
       const { total, pending, completed } = attendanceStats(w);
       return `<section class="attendance-panel"><div><h2>${pending ? `รอบันทึกผลอีก ${number(pending)} คน` : "บันทึกผลครบแล้ว รอยืนยัน"}</h2><p>${esc(w.title)} · ${esc(archiveDateLabel(w.start))}</p><p>บันทึกแล้ว ${number(completed)} / ${number(total)} คน · ไม่นับรายการที่ยกเลิกลงทะเบียน${!total ? " · ไม่มีผู้ลงทะเบียนที่ต้องบันทึกผล" : ""}</p></div><div class="attendance-actions">${pending ? `<button class="btn small" data-action="attendance-pending" data-id="${esc(w.id)}">ดูรายชื่อที่ยังค้าง</button>` : ""}<button class="btn small primary" data-action="finalize-attendance" data-id="${esc(w.id)}" ${pending || context.apiSaveCount ? "disabled" : ""}>ยืนยันผลและเก็บเข้าประวัติ</button></div></section>`;
     }
+    if (w) return "";
     const tasks = attendanceTasks();
     return tasks.length
       ? `<section class="attendance-panel"><div><h2>มี ${number(tasks.length)} เวิร์กช็อปรอบันทึกหรือยืนยันผล</h2><p>กิจกรรมที่จบแล้วต้องระบุผลให้ครบทุกคนก่อนเก็บเข้าประวัติ</p></div><button class="btn small" data-action="participants-for" data-id="${esc(tasks[0].id)}">เปิดงานที่รอดำเนินการ</button></section>`
@@ -839,6 +957,7 @@ export function createManagementViews(context) {
     openWorkshopMenu,
     openAttendanceMenu,
     participantsV2,
+    participantRows,
     staffDashboard,
     workshopArchive,
     workshopModal,

@@ -387,6 +387,7 @@ export function createRecordViews(context) {
         (!count ||
           !(await askConfirm(
             `Clear ${action === "complaint-clear-all" ? "คำร้องทั้งหมด" : "คำร้องที่เลือก"} ${count} รายการจากฝั่งเจ้าหน้าที่หรือไม่? คำร้องฝั่งผู้เรียนจะยังอยู่ตามเดิม`,
+            "danger",
           )))
       )
         return;
@@ -413,9 +414,10 @@ export function createRecordViews(context) {
           : action === "complaint-trash"
             ? "ย้ายไปถังขยะแล้ว · กู้คืนได้ภายใน 15 วัน"
             : "กู้คืนคำร้องแล้ว",
+        "success",
       );
     } catch (error) {
-      if (actor === state.userId) toast(error.message);
+      if (actor === state.userId) toast(error.message, "error");
     } finally {
       busy = false;
       if (actor === state.userId) context.render();

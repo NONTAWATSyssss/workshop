@@ -5,8 +5,8 @@ const http = require("node:http");
 const { once } = require("node:events");
 const database = require("./helpers/test-database");
 
-async function start(t, available = false) {
-  const db = await database();
+async function start(t, available = false, databaseOptions = {}) {
+  const db = await database(databaseOptions);
   const sent = [];
   const app = await require("../src/app")({
     database: db,
@@ -37,7 +37,7 @@ async function start(t, available = false) {
       cookie: response.headers.get("set-cookie"),
     };
   };
-  return { db, call, sent };
+  return { db, call, sent, base };
 }
 const applicant = {
   name: "สมัครสมาชิกทดสอบ",
@@ -52,6 +52,179 @@ const applicant = {
 const headers = (login) => ({
   Cookie: login.cookie.split(";")[0],
   "X-CSRF-Token": login.body.csrf,
+});
+
+test("profile photos persist independently, require ownership and CSRF, and never enter workspace JSON", async (t) => {
+  const fs = require("node:fs");
+  const { db, call, base } = await start(t);
+  const people = [
+    applicant,
+    {
+      ...applicant,
+      email: "other-photo@example.test",
+      phone: "0822222222",
+      code: "PHOTO-OTHER",
+    },
+    {
+      ...applicant,
+      email: "staff-photo@example.test",
+      phone: "0833333333",
+      code: "PHOTO-STAFF",
+    },
+  ];
+  for (const person of people)
+    assert.equal((await call("registration/request", person)).status, 200);
+  await db.prepare("UPDATE users SET status='APPROVED'").run();
+  await db
+    .prepare("UPDATE users SET role='staff' WHERE email=?")
+    .run(people[2].email);
+  const logins = [];
+  for (const person of people)
+    logins.push(
+      await call("login", {
+        identity: person.email,
+        password: person.password,
+      }),
+    );
+  const auth = headers(logins[0]);
+  const id = logins[0].body.user.id;
+  const imageBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j8ioAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const image = "data:image/png;base64," + imageBytes.toString("base64");
+  assert.equal((await call("account/avatar", { image })).status, 401);
+  assert.equal(
+    (await call("account/avatar", { image }, { Cookie: auth.Cookie })).status,
+    403,
+  );
+  for (const invalid of [
+    "/assets/images/image-003.jpg",
+    "data:image/svg+xml;base64,PHN2Zz4=",
+    "data:image/png;base64,SGVsbG8=",
+  ])
+    assert.equal(
+      (await call("account/avatar", { image: invalid }, auth)).status,
+      400,
+    );
+  assert.equal(
+    (await call("account/avatar", { image: "x".repeat(700001) }, auth)).status,
+    413,
+  );
+  assert.equal(
+    (
+      await call(
+        "account/avatar",
+        { image, userId: logins[1].body.user.id },
+        auth,
+      )
+    ).status,
+    400,
+  );
+  const saved = await call("account/avatar", { image }, auth);
+  assert.equal(saved.status, 200);
+  assert.match(
+    saved.body.user.avatar,
+    new RegExp("^/api/avatars/" + id + "\\?v=[a-f0-9]{64}$"),
+  );
+  assert.ok(!JSON.stringify(saved.body).includes("data:image/"));
+  const url = base + saved.body.user.avatar;
+  assert.equal((await fetch(url)).status, 401);
+  assert.equal((await fetch(url, { headers: headers(logins[1]) })).status, 403);
+  assert.equal((await fetch(url, { headers: headers(logins[2]) })).status, 200);
+  const photo = await fetch(url, { headers: auth });
+  assert.equal(photo.headers.get("content-type"), "image/png");
+  assert.match(photo.headers.get("cache-control"), /private/);
+  assert.equal(photo.headers.get("x-content-type-options"), "nosniff");
+  assert.deepEqual(Buffer.from(await photo.arrayBuffer()), imageBytes);
+  const etag = photo.headers.get("etag");
+  assert.equal(
+    (await fetch(url, { headers: { ...auth, "If-None-Match": etag } })).status,
+    304,
+  );
+  assert.equal(
+    (await call("session", undefined, auth)).body.user.avatar,
+    saved.body.user.avatar,
+  );
+  assert.equal(
+    (await call("store", undefined, auth)).body.store.users[0].avatar,
+    saved.body.user.avatar,
+  );
+  const rename = await call(
+    "account",
+    { name: "เปลี่ยนชื่อโปรไฟล์", phone: applicant.phone },
+    auth,
+  );
+  assert.equal(rename.status, 200);
+  assert.equal(rename.body.user.avatar, saved.body.user.avatar);
+  const secondBytes = fs.readFileSync("public/assets/images/image-003.jpg");
+  const changed = await call(
+    "account/avatar",
+    { image: "data:image/jpeg;base64," + secondBytes.toString("base64") },
+    auth,
+  );
+  assert.equal(changed.status, 200);
+  assert.notEqual(changed.body.user.avatar, saved.body.user.avatar);
+  const newer = await fetch(base + changed.body.user.avatar, {
+    headers: { ...auth, "If-None-Match": etag },
+  });
+  assert.equal(newer.status, 200);
+  assert.deepEqual(Buffer.from(await newer.arrayBuffer()), secondBytes);
+  const beforeFailure = await db
+    .prepare("SELECT revision FROM app_state WHERE id=1")
+    .get();
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (sql.startsWith("UPDATE app_state SET revision="))
+      return {
+        ...statement,
+        run: async () => {
+          throw Object.assign(Error("test"), { code: "AVATAR_ROLLBACK_TEST" });
+        },
+      };
+    return statement;
+  };
+  try {
+    assert.equal((await call("account/avatar", { image }, auth)).status, 500);
+  } finally {
+    db.prepare = prepare;
+  }
+  assert.equal(
+    (await call("session", undefined, auth)).body.user.avatar,
+    changed.body.user.avatar,
+  );
+  assert.equal(
+    (await db.prepare("SELECT image FROM user_avatars WHERE user_id=?").get(id))
+      .image ===
+      "data:image/jpeg;base64," + secondBytes.toString("base64"),
+    true,
+  );
+  assert.deepEqual(
+    await db.prepare("SELECT revision FROM app_state WHERE id=1").get(),
+    beforeFailure,
+  );
+  const snapshot = (
+    await db.prepare("SELECT data_json FROM app_state WHERE id=1").get()
+  ).data_json;
+  assert.ok(!JSON.stringify(snapshot).includes("data:image/"));
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT avatar_version FROM users WHERE id=?")
+        .get(logins[1].body.user.id)
+    ).avatar_version,
+    "",
+  );
+  const removed = await call("account/avatar", { image: "" }, auth);
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.user.avatar, "");
+  assert.equal(
+    await db.prepare("SELECT image FROM user_avatars WHERE user_id=?").get(id),
+    undefined,
+  );
+  assert.equal((await fetch(url, { headers: auth })).status, 404);
+  assert.equal((await call("session", undefined, auth)).body.user.avatar, "");
 });
 
 test("complaint trash and staff Clear are independent, expire after 15 days, and purge only after both sides delete", async (t) => {
@@ -504,6 +677,94 @@ test("signup, login, session, protected workspace and logout work again without 
   assert.equal((await call("logout", {}, { Cookie: auth.Cookie })).status, 403);
   assert.equal((await call("logout", {}, auth)).status, 200);
   assert.equal((await call("store", undefined, auth)).status, 401);
+});
+
+test("login returns the authorized workspace in three database round trips and resets failed attempts", async (t) => {
+  const queries = [];
+  const { db, call } = await start(t, false, {
+    onQuery: (sql) => queries.push(sql),
+  });
+  assert.equal((await call("registration/request", applicant)).status, 200);
+  assert.equal(
+    (
+      await call("registration/request", {
+        ...applicant,
+        name: "Other Member",
+        email: "other-perf@example.test",
+        code: "OTHER-PERF",
+        phone: "0823456789",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await call("login", { identity: applicant.email, password: "incorrect" }))
+      .status,
+    401,
+  );
+  queries.length = 0;
+  const login = await call("login", {
+    identity: applicant.email.toUpperCase(),
+    password: applicant.password,
+  });
+  assert.equal(login.status, 200);
+  assert.ok(
+    queries.length <= 3,
+    `Login exceeded its database round-trip budget: ${queries.length}`,
+  );
+  assert.equal(
+    login.body.store.users.length,
+    1,
+    "member bootstrap must not include other profiles",
+  );
+  assert.equal(login.body.store.users[0].id, login.body.user.id);
+  assert.doesNotMatch(
+    JSON.stringify(login.body),
+    /password_hash|password_salt|password_plaintext|RestorePassword123/,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT count(*) n FROM login_attempts WHERE identity=?")
+        .get(applicant.email)
+    ).n,
+    0,
+  );
+  assert.equal((await call("store", undefined, headers(login))).status, 200);
+  assert.equal((await call("logout", {}, headers(login))).status, 200);
+  assert.equal(
+    (await call("session", undefined, headers(login))).body.user,
+    null,
+  );
+});
+
+test("login bootstrap respects database role changes, account approval and failed portal checks", async (t) => {
+  const { db, call } = await start(t);
+  assert.equal((await call("registration/request", applicant)).status, 200);
+  const credentials = {
+    identity: applicant.email,
+    password: applicant.password,
+  };
+  const deniedPortal = await call("login", { ...credentials, portal: "staff" });
+  assert.equal(deniedPortal.status, 403);
+  assert.equal(deniedPortal.cookie, null);
+  assert.equal(deniedPortal.body.store, undefined);
+  await db
+    .prepare("UPDATE users SET role='staff' WHERE email=?")
+    .run(applicant.email);
+  const promoted = await call("login", { ...credentials, portal: "staff" });
+  assert.equal(promoted.status, 200);
+  assert.equal(promoted.body.user.role, "staff");
+  assert.equal(promoted.body.store.users[0].role, "staff");
+  for (const status of ["WAITING", "REJECTED"]) {
+    await db
+      .prepare("UPDATE users SET status=? WHERE email=?")
+      .run(status, applicant.email);
+    const blocked = await call("login", credentials);
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.cookie, null);
+    assert.equal(blocked.body.store, undefined);
+  }
 });
 
 test("database role changes refresh the workspace snapshot without requiring a new session", async (t) => {

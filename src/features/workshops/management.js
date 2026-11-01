@@ -10,13 +10,13 @@ module.exports = function createManagementRoutes({
   uid,
   localDateInput,
   viewFromSnapshot,
-  inspectSnapshot,
+  loadWorkspace,
   syncUsersSnapshot,
   mergeSnapshot,
   writeSnapshot,
   refreshSnapshot,
+  workshopRows,
   maintainComplaints,
-  complaintMaintenanceDue,
 }) {
   async function routeApi(req, res, url) {
     if (
@@ -88,24 +88,9 @@ module.exports = function createManagementRoutes({
     if (req.method === "GET" && url.pathname === "/api/store") {
       const actor = await requireAccess(req, res);
       if (!actor) return;
-      const inspected = await inspectSnapshot();
-      let snapshot = inspected.snapshot;
-      if (inspected.usersChanged || complaintMaintenanceDue(snapshot)) {
-        // Re-read under the shared lock before making any maintenance changes.
-        await db.exec("BEGIN IMMEDIATE");
-        try {
-          snapshot = await maintainComplaints(await syncUsersSnapshot());
-          await db.exec("COMMIT");
-        } catch (error) {
-          await db.exec("ROLLBACK");
-          throw error;
-        }
-      }
-      const user = snapshot.users.find((item) => item.id === actor.user.id);
-      if (!user || user.status !== "APPROVED")
-        return json(res, 401, { error: "กรุณาเข้าสู่ระบบอีกครั้ง" });
+      const workspace = await loadWorkspace(actor.user);
       return json(res, 200, {
-        store: viewFromSnapshot(snapshot, user),
+        store: workspace.store,
       });
     }
     if (req.method === "POST" && url.pathname === "/api/store")
@@ -115,14 +100,11 @@ module.exports = function createManagementRoutes({
         await db.exec("BEGIN IMMEDIATE");
         try {
           await maintainComplaints(await syncUsersSnapshot());
-          const merged = await mergeSnapshot(actor.user, data.store);
-          merged.revision =
-            (
-              await db
-                .prepare("SELECT revision FROM app_state WHERE id=1")
-                .get()
-            ).revision + 1;
-          await writeSnapshot(merged);
+          const { snapshot: merged, previous } = await mergeSnapshot(
+            actor.user,
+            data.store,
+          );
+          await writeSnapshot(merged, previous);
           await db
             .prepare(
               "UPDATE app_state SET revision=?,data_json=?,updated_at=? WHERE id=1",
@@ -364,8 +346,9 @@ module.exports = function createManagementRoutes({
               )
               .run(uid(), actor.user.id, workshopId, t, t);
           await refreshSnapshot();
+          const workshops = await workshopRows();
           await db.exec("COMMIT");
-          return json(res, 200, { ok: true, workshops: await workshopRows() });
+          return json(res, 200, { ok: true, workshops });
         } catch (e) {
           await db.exec("ROLLBACK");
           return json(res, e.status || 400, { error: e.message });

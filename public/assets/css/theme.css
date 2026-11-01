@@ -1,0 +1,912 @@
+/* Blue glass visual system. Loaded last; geometry, typography and behavior stay in their owning files. */
+:root {
+  color-scheme: light;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-soft: #e6f0ff;
+  --color-accent-border: #7398c8;
+  --color-accent-rgb: 37 99 235;
+  --color-text: #1b3553;
+  --color-text-secondary: #425c78;
+  --color-text-muted: #4b6078;
+  --color-on-dark: #ffffff;
+  --color-on-dark-muted: #e2edff;
+  --color-page: #dfeaf8;
+  --color-surface-solid: #f7fbff;
+  --color-surface-soft: #eaf3fd;
+  --color-surface-hover: #e4effd;
+  --color-selected: #d9e9ff;
+  --color-strong-surface: #163c68;
+  --color-border: #b7cce3;
+  --color-border-soft: #d3e1f0;
+  --color-input-border: #7189a6;
+  --color-focus: #1d4ed8;
+  --color-disabled: #e2ebf5;
+  --color-disabled-text: #64778d;
+  --color-shadow-rgb: 35 78 126;
+  --color-scrim: #15365866;
+  --color-success: #12634e;
+  --color-success-soft: #e4f5ee;
+  --color-success-border: #afd9c9;
+  --color-warning: #835514;
+  --color-warning-soft: #fff4da;
+  --color-warning-border: #e4cb98;
+  --color-danger: #b12c48;
+  --color-danger-soft: #fff0f4;
+  --color-danger-border: #e7b7c3;
+  --glass-fill: linear-gradient(135deg, #ffffffe8, #f4f9ffb8);
+  --glass-fill-raised: linear-gradient(140deg, #fffffff5, #edf5ffe8);
+  --glass-edge: #ffffffcc;
+  --glass-shadow: 0 12px 38px -24px #234e7e40, inset 0 1px 0 #ffffff;
+  --glass-shadow-raised: 0 24px 64px -30px #234e7e5c, inset 0 1px 0 #ffffff;
+  --card-hover-transform: perspective(800px) rotateX(1deg) rotateY(-1deg)
+    translateY(-2px);
+  --card-wide-hover-transform: perspective(1200px) rotateX(1deg)
+    rotateY(-0.5deg) translateY(-2px);
+  /* Existing aliases keep all current controls and feature modules on the same palette. */
+  --purple: var(--color-accent);
+  --purple-dark: var(--color-accent-hover);
+  --navy: var(--color-text);
+  --ink-soft: var(--color-text-secondary);
+  --line: var(--color-border-soft);
+  --surface-soft: var(--color-surface-soft);
+  --red: var(--color-danger);
+  --green: var(--color-success);
+  --shadow-soft: var(--glass-shadow);
+  --shadow-lift: var(--glass-shadow-raised);
+  --dropdown-accent: var(--color-accent);
+  --dropdown-ink: var(--color-text);
+  --dropdown-muted: var(--color-text-muted);
+  --dropdown-border: var(--color-input-border);
+  --dropdown-hover: var(--color-surface-hover);
+  --dropdown-selected: var(--color-selected);
+  --dropdown-shadow: var(--glass-shadow-raised);
+}
+
+html {
+  background: var(--color-page);
+}
+body {
+  background:
+    radial-gradient(ellipse at 6% 8%, #ffffffbf, transparent 42%),
+    radial-gradient(ellipse at 96% 4%, #a9cbed70, transparent 38%),
+    radial-gradient(ellipse at 50% 88%, #f7fcffd9, transparent 58%),
+    linear-gradient(130deg, #eaf3fe, #d3e4f6 58%, #e6f1fc);
+  color: var(--color-text);
+  min-height: 100dvh;
+}
+::selection {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+a,
+button,
+input,
+select,
+textarea,
+summary {
+  -webkit-tap-highlight-color: #2563eb14;
+}
+:is(a, button, input, select, textarea, summary):focus-visible {
+  outline-color: var(--color-focus);
+}
+h1,
+h2,
+h3,
+.brand-title,
+.activity-title,
+.record-title,
+.manage-workshop-title {
+  color: var(--color-text);
+}
+.muted,
+.sub,
+.eyebrow,
+.meta,
+.page-heading .muted,
+.field > label,
+.workspace-label,
+.sidebar-label,
+.brand-institution {
+  color: var(--color-text-muted);
+}
+
+/* Broad surfaces are translucent without allocating a blur layer per card or table row. */
+.nav,
+.sidebar,
+.panel,
+.card,
+.hero,
+.stat,
+.toolbar,
+.tablewrap,
+.foot,
+.staff-tasks,
+.staff-trend-panel,
+.staff-donut-panel,
+.staff-activity-details,
+.manage-filters,
+.manage-table-wrap,
+.record-surface,
+.record-summary,
+.notification-toolbar,
+.notification-empty,
+.choice,
+.public-news-card,
+.public-workshop-card {
+  background: var(--glass-fill);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+.hero,
+.hero h1,
+.hero h2,
+.hero h3 {
+  color: var(--color-text);
+}
+.hero p,
+.hero .meta,
+.hero .meta i {
+  color: var(--color-text-secondary);
+}
+.hero .eyebrow {
+  color: var(--color-accent-hover);
+}
+.hero::after {
+  border-color: #ffffff66;
+}
+.nav,
+.sidebar {
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  backdrop-filter: blur(20px) saturate(130%);
+}
+.nav {
+  border: 1px solid var(--glass-edge);
+  border-radius: 0 0 22px 22px;
+}
+.sidebar {
+  background: linear-gradient(160deg, #ffffffe3, #eaf3ffc9);
+}
+.side-nav button {
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+}
+.side-nav button.active {
+  background: var(--color-selected);
+  color: var(--color-accent-hover);
+  border-color: #96b8e4;
+  box-shadow:
+    inset 0 1px 0 #ffffffd9,
+    0 4px 12px -8px #2563eb40;
+}
+.side-nav button.active i,
+.side-nav button.active span,
+.side-nav button.active .nav-count {
+  color: var(--color-accent-hover);
+}
+.sidebar-bottom,
+.profile-card,
+.workspace-label,
+.footer-bottom {
+  border-color: var(--color-border-soft);
+}
+.header-avatar,
+.profile-avatar,
+.nav-count,
+.note-spark,
+.record-ticket-icon,
+.notification-icon {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-hover);
+  border-color: var(--color-border-soft);
+}
+.sidebar-note {
+  background: var(--color-accent-soft);
+  border-color: var(--color-border-soft);
+}
+.role-pill,
+.role-pill.staff-role,
+.sync {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-soft);
+  border-color: var(--color-border-soft);
+}
+.brand-dot,
+.heading-dot {
+  color: var(--color-accent);
+}
+
+/* Every existing action retains its meaning, including destructive and disabled states. */
+.btn {
+  background: #ffffffc9;
+  border-color: var(--color-border);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 2px 5px #234e7e08;
+}
+.btn.primary {
+  background: linear-gradient(
+    135deg,
+    var(--color-accent),
+    var(--color-accent-hover)
+  );
+  color: var(--color-on-dark);
+  border-color: var(--color-accent);
+  box-shadow:
+    0 6px 16px -8px #2563eb80,
+    inset 0 1px 0 #ffffff33;
+}
+.btn.danger,
+.notification-clear,
+.record-clear-all,
+.record-row-trash,
+.workshop-actions-menu button.danger {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger-border);
+}
+.btn.orange,
+.notice,
+.attendance-panel,
+.archive-readonly {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning-border);
+}
+.error:not(:empty) {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+}
+.btn:disabled,
+input:disabled,
+select:disabled,
+select:not([multiple]):not([size]):disabled {
+  color: var(--color-disabled-text);
+  background: var(--color-disabled);
+  border-color: var(--color-border-soft);
+  box-shadow: none;
+}
+.btn.primary:disabled {
+  color: var(--color-on-dark);
+  background: var(--color-accent);
+}
+.btn.is-loading:disabled,
+.btn.is-success:disabled {
+  opacity: 1;
+  color: var(--color-on-dark);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  box-shadow:
+    0 5px 14px -8px #2563eb80,
+    inset 0 1px 0 #ffffff33;
+}
+.btn.is-success:disabled {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+.btn.danger.is-loading:disabled {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+.ATTENDED,
+.APPROVED,
+.record-status.status-attended,
+.record-status.status-replied,
+.staff-phase.is-ongoing,
+.manage-status-ongoing,
+.badge.phase-ongoing {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.PENDING,
+.WAITING,
+.record-status.status-pending,
+.record-status.status-open,
+.staff-phase {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+.ABSENT,
+.REJECTED,
+.record-status.status-absent,
+.manage-status-cancelled {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+.CANCELLED,
+.record-status.status-cancelled,
+.record-status.status-closed,
+.staff-phase.is-closed,
+.manage-status-finished,
+.manage-status-closed,
+.badge.phase-closed,
+.badge.phase-finished {
+  color: var(--color-text-secondary);
+  background: var(--color-disabled);
+}
+.badge.phase-upcoming,
+.manage-status-upcoming {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-soft);
+}
+.choice .choice-icon,
+.staff-choice .choice-icon,
+.role-selector .staff-choice .choice-icon {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-soft);
+}
+.choice:hover .choice-arrow,
+.staff-choice:hover .choice-arrow,
+.role-selector .staff-choice:hover .choice-arrow {
+  color: var(--color-on-dark);
+  background: var(--color-accent);
+}
+
+/* Forms remain clearly bounded; menus are more opaque than the glass behind them. */
+input:not([type="checkbox"]):not([type="radio"]),
+select:not([multiple]):not([size]),
+textarea,
+.auth-password,
+.date-range-trigger,
+.workshop-time-trigger {
+  background: #ffffffdb;
+  color: var(--color-text);
+  border-color: var(--color-input-border);
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--color-accent);
+}
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+.auth-form input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+input:not([type="checkbox"]):not([type="radio"]):disabled,
+textarea:disabled {
+  color: var(--color-disabled-text);
+  background: var(--color-disabled);
+  border-color: var(--color-border-soft);
+}
+.auth-password input {
+  background: transparent;
+  box-shadow: none;
+}
+.field label,
+.auth-form .field > label,
+.record-filter > span,
+.archive-view .archive-field {
+  color: var(--color-text-secondary);
+}
+.account-dropdown,
+.workshop-actions-menu,
+.date-range-panel,
+.date-period-options,
+.workshop-time-panel {
+  background: var(--glass-fill-raised);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow-raised);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  backdrop-filter: blur(18px) saturate(120%);
+}
+.dialog-back,
+.confirm-back {
+  background: var(--color-scrim);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.dialog,
+.confirm-dialog {
+  background: var(--glass-fill-raised);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow-raised);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  backdrop-filter: blur(22px) saturate(120%);
+}
+.dialog .top,
+.date-range-actions,
+.workshop-time-actions,
+.record-detail-actions {
+  border-color: var(--color-border-soft);
+}
+.close,
+.auth-password-toggle {
+  color: var(--color-text-secondary);
+  background: var(--color-accent-soft);
+}
+.toast {
+  background: var(--color-strong-surface);
+  color: var(--color-on-dark);
+  border: 1px solid #ffffff66;
+  box-shadow: var(--glass-shadow-raised);
+}
+
+/* Calendars and time/month/year menus keep their selected/range/today distinctions. */
+.date-range-panel .date-range-actions,
+.workshop-range-field .date-range-actions,
+.workshop-time-actions {
+  background: var(--color-surface-solid);
+  box-shadow: 0 -6px 12px #f7fbffeb;
+}
+.date-range-inputs,
+.date-period-trigger,
+.date-period-options,
+.workshop-time-options,
+.workshop-time-columns {
+  border-color: var(--color-border-soft);
+}
+
+/* A blue, airy public home; no new external assets or heavy background animation. */
+.public-hero {
+  padding: 32px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 26px;
+  background: var(--glass-fill);
+  box-shadow: var(--glass-shadow);
+}
+.public-hero h1,
+.public-section-heading h2,
+.public-news-card h3 button {
+  color: var(--color-text);
+}
+.public-institution,
+.public-news-meta > span:first-child,
+.public-workshop-hours,
+.public-news-read,
+.public-workshop-footer button {
+  color: var(--color-accent-hover);
+}
+.public-hero-description,
+.public-news-content > p,
+.public-section-heading p,
+.public-workshop-meta,
+.public-carousel-hint,
+.public-workshops-count {
+  color: var(--color-text-muted);
+}
+.public-hero-photo,
+.public-news-card,
+.public-workshop-card {
+  border-color: var(--glass-edge);
+}
+.public-hero-photo figcaption {
+  background: #163c68d9;
+  color: var(--color-on-dark);
+}
+.public-carousel-controls button {
+  background: #ffffffd9;
+  color: var(--color-accent-hover);
+  border-color: var(--color-border);
+  box-shadow: var(--glass-shadow);
+}
+.public-workshop-open {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.public-workshop-open > span {
+  background: var(--color-success);
+}
+.workshop-card .cover,
+.cover {
+  background: linear-gradient(
+    135deg,
+    var(--color-surface-soft),
+    var(--color-selected)
+  );
+}
+.cover .tag {
+  color: var(--color-accent-hover);
+  background: #ffffffeb;
+}
+.progress,
+.staff-chart-axis,
+.staff-trend-item {
+  border-color: var(--color-border-soft);
+}
+.progress {
+  background: var(--color-accent-soft);
+}
+.progress span {
+  background: linear-gradient(90deg, #649cf5, var(--color-accent));
+}
+.auth-visual {
+  background: var(--color-strong-surface);
+}
+.auth-visual::after {
+  background: linear-gradient(
+    180deg,
+    #143e654d 0%,
+    transparent 28%,
+    #123358b3 70%,
+    #122f53eb 100%
+  );
+}
+.auth-visual-copy > h3,
+.auth-visual-brand {
+  color: var(--color-on-dark);
+}
+.auth-visual-copy > p,
+.auth-visual-copy > span,
+.auth-visual-footer {
+  color: var(--color-on-dark-muted);
+}
+.auth-tabs,
+.tabs,
+.manage-view-switch,
+.notification-center-filters {
+  background: var(--color-accent-soft);
+  border-color: var(--color-border-soft);
+}
+.auth-tabs > button[aria-selected="true"],
+.tabs button.active,
+.manage-view-switch button[aria-pressed="true"],
+.notification-center-filters button.active {
+  background: var(--color-surface-solid);
+  color: var(--color-accent-hover);
+  border-color: var(--color-border);
+  box-shadow:
+    0 3px 10px -5px #234e7e26,
+    inset 0 1px 0 #ffffff;
+}
+.auth-intro p,
+.auth-form-panel .auth-intro > p {
+  color: var(--color-text);
+}
+.auth-intro span,
+.auth-links,
+.auth-return,
+.auth-policy {
+  color: var(--color-text-muted);
+}
+
+/* Operational screens: quieter glass around dense, readable data. */
+th,
+.staff-table th,
+.manage-table th,
+.report-table th {
+  background: var(--color-accent-soft);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-soft);
+}
+td,
+.staff-table td,
+.manage-table td,
+.report-table td,
+.complaint-row,
+.member-complaint-row,
+.record-toolbar,
+.record-pagination,
+.record-selection,
+.manage-pagination {
+  border-color: var(--color-border-soft);
+}
+.record-toolbar,
+.record-section-heading,
+.record-pagination,
+.record-selection,
+.manage-results-heading,
+.manage-pagination {
+  background: #ffffff47;
+}
+.record-summary > div:first-child,
+.record-earned,
+.attendance-panel.is-complete,
+.archive-context {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-soft);
+  border-color: var(--color-border-soft);
+}
+.staff-dashboard {
+  --staff-attended: #26846d;
+  --staff-absent: #bb526e;
+  --staff-chart-track: var(--color-accent-soft);
+}
+.staff-bar-fill {
+  background: linear-gradient(0deg, var(--color-accent), #78b0fb);
+}
+.staff-donut::before {
+  background: var(--color-surface-solid);
+}
+.record-selection-mark {
+  background: #153658b3;
+}
+.record-selection-mark > i {
+  color: var(--color-accent-hover);
+  background: var(--color-on-dark);
+}
+.record-staff-row.is-selected .complaint-row:focus-visible {
+  outline-color: var(--color-on-dark);
+}
+.thread-original {
+  background: var(--color-accent-soft);
+  border-color: var(--color-border-soft);
+  color: var(--color-text);
+}
+.thread-reply {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-border);
+  color: var(--color-text);
+}
+.thread-original .sub,
+.thread-reply .sub {
+  color: var(--color-text-muted);
+}
+.workshop-editor .workshop-upload,
+.workshop-editor .workshop-upload-placeholder {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+}
+.foot {
+  background: var(--glass-fill);
+}
+.footer-brand strong {
+  color: var(--color-text);
+}
+.footer-brand p,
+.footer-institution p,
+.footer-bottom {
+  color: var(--color-text-muted);
+}
+.footer-institution > span,
+.footer-motto > span {
+  color: var(--color-accent-hover);
+}
+.app-bootstrap {
+  background:
+    radial-gradient(ellipse at 15% 20%, #ffffffbf, transparent 45%),
+    radial-gradient(ellipse at 80% 80%, #b8d6f480, transparent 45%),
+    var(--color-page);
+}
+.app-bootstrap-progress > span {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    #7faef1 20%,
+    var(--color-accent) 70%,
+    #d5e7ff
+  );
+}
+/* One shared, pointer-driven 3D effect for content cards across all portals.
+   The user explicitly enabled this interaction even with system effects off.
+   Only transforms and shadow animate; layout, overlays and tables stay stable. */
+@media screen and (hover: hover) and (pointer: fine) {
+  :is(
+    .card,
+    .panel:not(.tablewrap, .empty),
+    .stat,
+    .hero,
+    .choice,
+    .public-hero-photo,
+    .public-news-card,
+    .public-workshop-card,
+    .record-summary,
+    .staff-tasks,
+    .attendance-panel,
+    .profile-card
+  ) {
+    transition:
+      transform 240ms cubic-bezier(0.2, 0, 0, 1),
+      box-shadow 240ms ease-out !important;
+  }
+  :is(
+    .card,
+    .panel:not(.tablewrap, .empty),
+    .stat,
+    .hero,
+    .choice,
+    .public-hero-photo,
+    .public-news-card,
+    .public-workshop-card,
+    .record-summary,
+    .staff-tasks,
+    .attendance-panel,
+    .profile-card
+  ):hover {
+    transform: var(--card-hover-transform);
+    box-shadow: var(--glass-shadow-raised);
+  }
+  :is(
+    .panel:not(.tablewrap, .empty, .learner-summary),
+    .hero,
+    .public-hero-photo,
+    .public-news-card.is-featured,
+    .record-summary,
+    .staff-tasks,
+    .attendance-panel
+  ):hover {
+    transform: var(--card-wide-hover-transform);
+  }
+  /* Use only the innermost card under the pointer, and keep form/menu anchors flat. */
+  :is(
+    .card,
+    .panel:not(.tablewrap, .empty),
+    .stat,
+    .hero,
+    .choice,
+    .public-hero-photo,
+    .public-news-card,
+    .public-workshop-card,
+    .record-summary,
+    .staff-tasks,
+    .attendance-panel,
+    .profile-card
+  ):has(
+    input:focus,
+    textarea:focus,
+    select:focus,
+    [aria-expanded="true"],
+    :is(
+      .card,
+      .panel,
+      .stat,
+      .hero,
+      .choice,
+      .public-hero-photo,
+      .public-news-card,
+      .public-workshop-card,
+      .record-summary,
+      .staff-tasks,
+      .attendance-panel,
+      .profile-card
+    ):hover
+  ) {
+    transform: none;
+  }
+  .public-workshop-track {
+    padding-top: 12px;
+    margin-top: -10px;
+  }
+}
+/* Touch keeps its existing tap behavior without latched legacy hover transforms. */
+@media (hover: none), (pointer: coarse) {
+  .card:hover,
+  .choice:hover,
+  .role-selector .choice:hover,
+  .card:hover .cover img {
+    transform: none;
+  }
+}
+@supports (appearance: base-select) and selector(select::picker(select)) {
+  select:not([multiple]):not([size])::picker(select) {
+    color: var(--color-text);
+    background: var(--glass-fill-raised);
+    border-color: var(--glass-edge);
+    box-shadow: var(--glass-shadow-raised);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+  }
+  select:not([multiple]):not([size]) option:checked {
+    color: var(--color-accent-hover);
+    background: var(--color-selected);
+  }
+}
+
+@media (hover: hover) {
+  .btn:where(
+      :not(.primary):not(.danger):not(.orange):not(.notification-clear):not(
+          .record-clear-all
+        )
+    ):not(:disabled):hover,
+  .side-nav button:not(.active):hover,
+  .account-dropdown > button:hover,
+  .workshop-actions-menu button:not(.danger):hover,
+  .record-open:hover,
+  .auth-password-toggle:hover,
+  .close:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-accent-hover);
+    border-color: var(--color-border);
+  }
+  .btn.primary:not(:disabled):hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+  .btn.danger:not(:disabled):hover,
+  .record-row-trash:hover {
+    color: var(--color-danger);
+    background: #fce1e8;
+    border-color: var(--color-danger-border);
+  }
+  tbody tr:hover,
+  .member-complaint-row:hover,
+  .complaint-row:hover {
+    background: var(--color-surface-hover);
+  }
+}
+
+@media (max-width: 760px) {
+  .public-hero {
+    padding: 24px;
+    border-radius: 22px;
+  }
+}
+@media (max-width: 420px) {
+  .public-hero {
+    padding: 20px 16px;
+  }
+}
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
+  .nav,
+  .sidebar,
+  .dialog,
+  .confirm-dialog,
+  .account-dropdown,
+  .date-range-panel,
+  .date-period-options,
+  .workshop-time-panel,
+  .workshop-actions-menu {
+    background: var(--color-surface-solid);
+    border-color: var(--color-border);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav,
+  .sidebar,
+  .dialog,
+  .account-dropdown,
+  .date-range-panel,
+  .workshop-time-panel,
+  .workshop-actions-menu {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface-solid);
+  }
+}
+@media (forced-colors: active) {
+  .nav,
+  .sidebar,
+  .panel,
+  .card,
+  .foot,
+  .public-hero,
+  .public-news-card,
+  .public-workshop-card,
+  .dialog,
+  .record-surface,
+  .record-summary,
+  .manage-table-wrap,
+  .account-dropdown,
+  .date-range-panel,
+  .workshop-time-panel {
+    background: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .side-nav button.active,
+  .auth-tabs button[aria-selected="true"],
+  .record-selection-mark {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+@media print {
+  html,
+  body {
+    background: white;
+  }
+  .panel,
+  .card,
+  .record-surface,
+  .record-summary,
+  .manage-table-wrap {
+    background: white;
+    border-color: #b7cce3;
+    box-shadow: none;
+  }
+}

@@ -62,6 +62,17 @@ export function createActivityViews(context) {
       image: "/assets/images/image-004.jpg",
       alt: "กล้องถ่ายภาพบนพื้นหลังสีส้ม",
     },
+    {
+      id: "learning-community",
+      label: "ชุมชนการเรียนรู้",
+      title: "แลกเปลี่ยนประสบการณ์ เปิดมุมมองใหม่ไปด้วยกัน",
+      text: "พบเพื่อนต่างสาขา แบ่งปันไอเดีย และต่อยอดความรู้ผ่านการเรียนรู้ร่วมกัน",
+      detail:
+        "เปิดพื้นที่ให้ผู้เรียนได้พบปะ แลกเปลี่ยนประสบการณ์ และร่วมคิดไอเดียกับเพื่อนต่างสาขา พร้อมค้นหาโอกาสนำทักษะที่มีมาต่อยอดเป็นผลงานร่วมกัน\n\nเนื้อหานี้เป็นประชาสัมพันธ์ตัวอย่าง กำหนดการและรายละเอียดกิจกรรมจริงจะประกาศอีกครั้ง",
+      date: "2026-10-25T09:00:00+07:00",
+      image: "/assets/images/image-002.jpg",
+      alt: "กลุ่มผู้เรียนแลกเปลี่ยนความคิดเห็นและทำงานร่วมกัน",
+    },
   ];
 
   function home() {
@@ -186,7 +197,37 @@ export function createActivityViews(context) {
     const unread = store.notifications.filter(
       (n) => n.userId === state.userId && !n.readAt,
     ).length;
+    const summaries = [
+      {
+        label: "กำลังจะเข้าร่วม",
+        value: upcoming.length,
+        unit: "กิจกรรม",
+        caption: "วางแผนการเรียนรู้ครั้งถัดไป",
+        icon: "fa-regular fa-calendar-check",
+        page: "mine",
+        action: "ดูกิจกรรมของฉัน",
+      },
+      {
+        label: "ชั่วโมงสะสม",
+        value: regs.reduce((sum, r) => sum + hoursOf(r), 0),
+        unit: "ชั่วโมง",
+        caption: "ยืนยันการเข้าร่วมแล้ว",
+        icon: "fa-solid fa-graduation-cap",
+        page: "reports",
+        action: "ดูผลการอบรม",
+      },
+      {
+        label: "สิ่งที่ต้องตรวจสอบ",
+        value: unread,
+        unit: "รายการใหม่",
+        caption: "แจ้งเตือนที่ยังไม่อ่าน",
+        icon: "fa-regular fa-bell",
+        page: "notifications",
+        action: "ดูการแจ้งเตือน",
+      },
+    ];
     return (
+      '<div class="learner-dashboard">' +
       title(
         "พื้นที่การเรียนรู้",
         "สวัสดี, " + esc(user().name),
@@ -195,24 +236,12 @@ export function createActivityViews(context) {
           esc(context.syncMessage) +
           "</span>",
       ) +
-      '<section class="panel next-activity"><span class="eyebrow">กิจกรรมถัดไปของฉัน</span>' +
+      '<section class="panel learner-next" aria-labelledby="learner-next-title">' +
       (next
-        ? "<h2>" +
-          esc(next.title) +
-          "</h2>" +
-          workshopMeta(next) +
-          '<button class="btn primary" data-action="workshop-detail" data-id="' +
-          next.id +
-          '">ดูรายละเอียดกิจกรรม</button>'
-        : '<h2>ยังไม่มีกิจกรรมที่กำลังจะเข้าร่วม</h2><p class="muted">เลือกกิจกรรมที่สนใจเพื่อเริ่มต้นการเรียนรู้</p><button class="btn primary" data-action="page" data-id="workshops">ค้นหากิจกรรม</button>') +
+        ? `<figure class="learner-next-media"><img src="${esc(next.cover || "/assets/images/bsru-workshop-logo.png")}" alt="" width="320" height="240" decoding="async">${next.photoSource ? `<figcaption><a href="${esc(next.photoSource.url)}" target="_blank" rel="noopener">ภาพ: ${esc(next.photoSource.credit)}</a></figcaption>` : ""}</figure><div class="learner-next-body"><div class="learner-next-heading"><div><span class="learner-kicker"><i class="fa-regular fa-calendar-check" aria-hidden="true"></i> กิจกรรมถัดไปของฉัน</span><h2 id="learner-next-title">${esc(next.title)}</h2></div><span class="learner-registered"><i class="fa-solid fa-check" aria-hidden="true"></i> ลงทะเบียนแล้ว</span></div><dl class="learner-next-meta"><div><dt><i class="fa-regular fa-clock" aria-hidden="true"></i> วันและเวลา</dt><dd>${esc(fmt(next.start))}<span>ถึง ${esc(fmt(next.end))}</span></dd></div><div><dt><i class="fa-solid fa-location-dot" aria-hidden="true"></i> สถานที่</dt><dd>${esc(next.place)}</dd></div></dl><div class="learner-next-footer"><div class="learner-next-facts"><span><i class="fa-regular fa-hourglass-half" aria-hidden="true"></i> ${number(next.hours)} ชั่วโมง</span><span><i class="fa-solid fa-users" aria-hidden="true"></i> เหลือ ${number(Math.max(0, next.capacity - occupancy(next.id)))} / ${number(next.capacity)} ที่นั่ง</span></div><button type="button" class="btn primary small" data-action="workshop-detail" data-id="${esc(next.id)}">ดูรายละเอียด <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></button></div></div>`
+        : '<div class="learner-next-empty-icon" aria-hidden="true"><i class="fa-regular fa-calendar-plus"></i></div><div class="learner-next-body"><span class="learner-kicker">กิจกรรมถัดไปของฉัน</span><h2 id="learner-next-title">เริ่มต้นการเรียนรู้ครั้งใหม่</h2><p class="muted">ยังไม่มีกิจกรรมที่กำลังจะเข้าร่วม เลือกกิจกรรมที่คุณสนใจได้เลย</p><div><button type="button" class="btn primary small" data-action="page" data-id="workshops">ค้นหากิจกรรม <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div></div>') +
       "</section>" +
-      '<div class="grid three space"><section class="panel"><h3>กำลังจะเข้าร่วม</h3><strong class="metric">' +
-      upcoming.length +
-      '</strong><p>กิจกรรม</p></section><section class="panel"><h3>ชั่วโมงสะสม</h3><strong class="metric">' +
-      number(regs.reduce((sum, r) => sum + hoursOf(r), 0)) +
-      '</strong><p>ยืนยันการเข้าร่วมแล้ว</p></section><section class="panel"><h3>สิ่งที่ต้องตรวจสอบ</h3><p>แจ้งเตือนที่ยังไม่อ่าน ' +
-      unread +
-      ' รายการ</p><button class="btn" data-action="page" data-id="notifications">ดูการแจ้งเตือน</button></section></div>' +
+      `<div class="learner-summary-grid">${summaries.map((item) => `<section class="panel learner-summary"><div class="learner-summary-main"><h2>${item.label}</h2><div class="learner-summary-value"><strong>${number(item.value)}</strong><span>${item.unit}</span></div></div><span class="learner-summary-icon" aria-hidden="true"><i class="${item.icon}"></i></span><div class="learner-summary-footer"><span>${item.caption}</span><button type="button" data-action="page" data-id="${item.page}" aria-label="${item.action}"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div></section>`).join("")}</div>` +
       '<div class="row between space"><h2>กิจกรรมที่เปิดรับสมัคร</h2><button class="btn" data-action="page" data-id="workshops">ดูทั้งหมด</button></div><div class="grid three space">' +
       (store.workshops
         .filter((w) => phase(w) === "upcoming" && occupancy(w.id) < w.capacity)
@@ -220,7 +249,7 @@ export function createActivityViews(context) {
         .slice(0, 3)
         .map(card)
         .join("") || empty("ยังไม่มีกิจกรรมเปิดรับสมัคร")) +
-      "</div>"
+      "</div></div>"
     );
   }
 
@@ -231,7 +260,7 @@ export function createActivityViews(context) {
       n = occupancy(w.id),
       a = staff(),
       available = phase(w) === "upcoming" && n < w.capacity;
-    return `<article class="card"><div class="cover">${w.cover ? `<img src="${esc(w.cover)}" alt="ภาพประกอบ ${esc(w.title)}" loading="lazy">` : `<i class="fa-solid ${esc(w.icon || "fa-graduation-cap")}"></i>`}<span class="tag">${esc(w.category || "BSRU WORKSHOP")}</span></div><div class="cardbody">${w.photoSource ? `<a class="photo-credit" href="${esc(w.photoSource.url)}" target="_blank" rel="noopener">ภาพประกอบ: ${esc(w.photoSource.credit)}</a>` : ""}<div class="row between"><span class="badge phase-${phase(w)}">${phaseLabel(w)}</span>${r ? badge(r.status) : ""}</div><h3 style="margin-top:14px;min-height:50px"><button class="activity-title" data-action="workshop-detail" data-id="${esc(w.id)}">${esc(w.title)}</button></h3>${workshopMeta(w)}<div class="row between" style="font-size:11px"><span class="muted">จำนวนผู้ลงทะเบียน</span><b>${n} / ${w.capacity} ที่นั่ง</b></div><div class="progress"><span style="width:${Math.min(100, (n / w.capacity) * 100)}%"></span></div>${!user() ? `<button class="btn primary" data-action="login">เข้าสู่ระบบเพื่อสมัครกิจกรรม</button>` : a ? `<button class="btn primary" style="width:100%" data-action="participants-for" data-id="${esc(w.id)}">จัดการผู้เข้าร่วม</button><div class="row space"><button class="btn small" data-action="edit-workshop" data-id="${esc(w.id)}">แก้ไขกิจกรรม</button>${!w.closed && scheduledPhase(w) !== "finished" ? `<button class="btn small danger" data-action="close-workshop" data-id="${esc(w.id)}">ปิดเวิร์กช็อป</button>` : ""}</div>` : r && r.status !== "CANCELLED" ? `<button class="btn" style="width:100%" data-action="page" data-id="mine">ดูกิจกรรมของฉัน →</button>` : `<button class="btn primary" style="width:100%" data-action="enroll" data-id="${esc(w.id)}" ${!available ? "disabled" : ""}>${!available ? (n >= w.capacity ? "ที่นั่งเต็ม" : "ปิดรับลงทะเบียน") : r ? "ลงทะเบียนอีกครั้ง" : "ลงทะเบียนเวิร์กช็อป"} &nbsp; →</button>`}</div></article>`;
+    return `<article class="card workshop-card"><div class="cover">${w.cover ? `<img src="${esc(w.cover)}" alt="ภาพประกอบ ${esc(w.title)}" loading="lazy" decoding="async" width="640" height="360">` : `<i class="fa-solid ${esc(w.icon || "fa-graduation-cap")}"></i>`}<span class="tag">${esc(w.category || "BSRU WORKSHOP")}</span></div><div class="cardbody">${w.photoSource ? `<a class="photo-credit" href="${esc(w.photoSource.url)}" target="_blank" rel="noopener">ภาพประกอบ: ${esc(w.photoSource.credit)}</a>` : ""}<div class="row between"><span class="badge phase-${phase(w)}">${phaseLabel(w)}</span>${r ? badge(r.status) : ""}</div><h3 class="workshop-card-title"><button class="activity-title" data-action="workshop-detail" data-id="${esc(w.id)}">${esc(w.title)}</button></h3><div class="workshop-card-meta"><div class="workshop-card-schedule"><i class="fa-regular fa-calendar" aria-hidden="true"></i><div><span>${esc(fmt(w.start))}</span><span class="workshop-card-end">ถึง ${esc(fmt(w.end))}</span></div></div><div class="workshop-card-facts"><span><i class="fa-solid fa-location-dot" aria-hidden="true"></i>${esc(w.place)}</span><span><i class="fa-regular fa-clock" aria-hidden="true"></i>${number(w.hours)} ชั่วโมง</span></div></div><div class="row between workshop-card-capacity"><span>ลงทะเบียน <b>${n} / ${w.capacity}</b></span><span>เหลือ ${Math.max(0, w.capacity - n)} ที่นั่ง</span></div><div class="progress"><span style="width:${Math.min(100, (n / w.capacity) * 100)}%"></span></div>${!user() ? `<button class="btn primary" data-action="login">เข้าสู่ระบบเพื่อสมัครกิจกรรม</button>` : a ? `<button class="btn primary" style="width:100%" data-action="participants-for" data-id="${esc(w.id)}">จัดการผู้เข้าร่วม</button><div class="row space"><button class="btn small" data-action="edit-workshop" data-id="${esc(w.id)}">แก้ไขกิจกรรม</button>${!w.closed && scheduledPhase(w) !== "finished" ? `<button class="btn small danger" data-action="close-workshop" data-id="${esc(w.id)}">ปิดเวิร์กช็อป</button>` : ""}</div>` : r && r.status !== "CANCELLED" ? `<button class="btn" style="width:100%" data-action="page" data-id="mine">ดูกิจกรรมของฉัน →</button>` : `<button class="btn primary" style="width:100%" data-action="enroll" data-id="${esc(w.id)}" ${!available ? "disabled" : ""}>${!available ? (n >= w.capacity ? "ที่นั่งเต็ม" : "ปิดรับลงทะเบียน") : r ? "ลงทะเบียนอีกครั้ง" : "ลงทะเบียนเวิร์กช็อป"} &nbsp; →</button>`}</div></article>`;
   }
 
   function empty(msg) {
@@ -303,7 +332,7 @@ export function createActivityViews(context) {
       .join(
         "",
       )}</select>${dateRangeField()}<span class="muted">${list.length} กิจกรรม</span></div>${
-      '<div class="grid three">' +
+      '<div class="grid three workshop-cards">' +
       list
         .sort((a, b) => new Date(a.start) - new Date(b.start))
         .map(card)
@@ -473,7 +502,7 @@ export function createActivityViews(context) {
     try {
       await saveNotificationAction("read", { id });
     } catch (error) {
-      if (member() && actor === state.userId) toast(error.message);
+      if (member() && actor === state.userId) toast(error.message, "error");
     } finally {
       pendingNotificationReads.delete(id);
       if (member() && actor === state.userId) {
@@ -502,6 +531,7 @@ export function createActivityViews(context) {
       if (
         !(await askConfirm(
           "ลบประวัติแจ้งเตือนทั้งหมดของคุณหรือไม่? ข้อความที่ยังอยู่ในแจ้งเตือนปัจจุบันจะไม่ถูกลบ และไม่สามารถกู้คืนประวัติที่ลบแล้วได้",
+          "danger",
         ))
       )
         return;
@@ -510,9 +540,9 @@ export function createActivityViews(context) {
       if (button) button.disabled = true;
       const result = await saveNotificationAction("clear-history");
       if (!result || !center.isConnected || !member()) return;
-      toast(`ลบประวัติแจ้งเตือนแล้ว ${result.deletedCount} รายการ`);
+      toast(`ลบประวัติแจ้งเตือนแล้ว ${result.deletedCount} รายการ`, "success");
     } catch (error) {
-      toast(error.message);
+      toast(error.message, "error");
     } finally {
       notificationBusy = false;
       if (center.isConnected) refreshNotifications();
@@ -556,7 +586,7 @@ export function createActivityViews(context) {
     if (!member()) return;
     const w = store.workshops.find((w) => w.id === id);
     if (!w || phase(w) !== "upcoming" || occupancy(id) >= w.capacity)
-      return toast("กิจกรรมปิดรับหรือที่นั่งเต็มแล้ว");
+      return toast("กิจกรรมปิดรับหรือที่นั่งเต็มแล้ว", "warning");
     if (context.apiSaveCount)
       return toast("กำลังบันทึกรายการก่อนหน้า กรุณารอสักครู่");
     const conflict = store.registrations.find((r) => {
@@ -572,6 +602,7 @@ export function createActivityViews(context) {
     if (conflict)
       return toast(
         "เวลาตรงกับกิจกรรมที่ลงทะเบียนไว้แล้ว กรุณาตรวจสอบกิจกรรมของฉัน",
+        "warning",
       );
     let r = store.registrations.find(
       (r) => r.workshopId === id && r.userId === state.userId,

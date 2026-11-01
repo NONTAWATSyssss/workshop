@@ -14,7 +14,8 @@ let apiCsrf = null,
   apiSaving = Promise.resolve(),
   apiSaveCount = 0,
   apiSaveEpoch = 0,
-  apiPollTimer = null;
+  apiPollTimer = null,
+  apiPolling = false;
 
 let syncMessage = "กำลังเชื่อมต่อ…";
 
@@ -121,6 +122,9 @@ const store = {
 let state = {
     workshopMenuTrigger: null,
     participantWorkshop: "all",
+    participantWorkshopQuery: "",
+    participantWorkshopPage: 1,
+    participantPage: 1,
     portal: "user",
     userId: null,
     page: "home",
@@ -214,10 +218,98 @@ const phaseLabel = (w) =>
     cancelled: "ยกเลิกกิจกรรม",
   })[phase(w)];
 
-function toast(msg) {
+const buttonFeedbackDefaults = new WeakMap();
+function buttonFeedback(button, phase, label = "กำลังดำเนินการ…") {
+  if (!button) return;
+  if (phase === "idle") {
+    const saved = buttonFeedbackDefaults.get(button);
+    if (saved) {
+      button.innerHTML = saved.html;
+      button.style.minWidth = saved.minWidth;
+      buttonFeedbackDefaults.delete(button);
+    }
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.classList.remove("is-loading", "is-success");
+    return;
+  }
+  if (!buttonFeedbackDefaults.has(button)) {
+    buttonFeedbackDefaults.set(button, {
+      html: button.innerHTML,
+      minWidth: button.style.minWidth || "",
+    });
+    const width = button.getBoundingClientRect?.().width;
+    if (width) button.style.minWidth = `${Math.ceil(width)}px`;
+  }
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.classList.toggle("is-loading", phase === "loading");
+  button.classList.toggle("is-success", phase === "success");
+  button.innerHTML = `${phase === "success" ? '<i class="fa-solid fa-check button-check" aria-hidden="true"></i>' : '<span class="button-spinner" aria-hidden="true"></span>'}<span>${esc(label)}</span>`;
+}
+
+function toast(msg, tone = "info") {
   clearTimeout(toastTimer);
-  $("#toast-root").innerHTML = `<div class="toast">${esc(msg)}</div>`;
-  toastTimer = setTimeout(() => ($("#toast-root").innerHTML = ""), 4000);
+  const tones = {
+    info: ["แจ้งให้ทราบ", "fa-circle-info"],
+    success: ["ดำเนินการสำเร็จ", "fa-circle-check"],
+    error: ["ดำเนินการไม่สำเร็จ", "fa-circle-exclamation"],
+    warning: ["โปรดตรวจสอบ", "fa-triangle-exclamation"],
+  };
+  if (!tones[tone]) tone = "info";
+  const [title, icon] = tones[tone];
+  const root = $("#toast-root");
+  root.setAttribute("role", tone === "error" ? "alert" : "status");
+  root.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
+  const duration = tone === "error" ? 8000 : 5000;
+  root.innerHTML = `<div class="toast alert-toast" data-tone="${tone}" style="--toast-duration:${duration}ms"><span class="alert-toast-icon" aria-hidden="true"><i class="fa-solid ${icon}"></i></span><div class="alert-toast-copy"><strong>${title}</strong><p>${esc(msg)}</p></div><button type="button" class="alert-toast-close" data-toast-dismiss aria-label="ปิดข้อความแจ้งเตือน"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><span class="alert-toast-timer" aria-hidden="true"></span></div>`;
+  const notice = root.querySelector(".alert-toast");
+  let remaining = duration,
+    startedAt = 0,
+    running = false,
+    hovered = false,
+    focused = false,
+    timer = null;
+  const resume = () => {
+    if (running || hovered || focused || !notice.isConnected) return;
+    running = true;
+    startedAt = Date.now();
+    notice.classList.remove("is-paused");
+    timer = setTimeout(() => {
+      if (notice.isConnected) notice.remove();
+    }, remaining);
+    toastTimer = timer;
+  };
+  const pause = () => {
+    if (!running) return;
+    clearTimeout(timer);
+    remaining = Math.max(0, remaining - (Date.now() - startedAt));
+    running = false;
+    notice.classList.add("is-paused");
+  };
+  notice.addEventListener("pointerenter", () => {
+    hovered = true;
+    pause();
+  });
+  notice.addEventListener("pointerleave", () => {
+    hovered = false;
+    resume();
+  });
+  notice.addEventListener("focusin", () => {
+    focused = true;
+    pause();
+  });
+  notice.addEventListener("focusout", (event) => {
+    focused = Boolean(
+      event.relatedTarget && notice.contains(event.relatedTarget),
+    );
+    if (!focused) resume();
+  });
+  notice.querySelector("[data-toast-dismiss]").addEventListener("click", () => {
+    clearTimeout(timer);
+    notice.remove();
+  });
+  resume();
 }
 
 function commit(msg) {
@@ -252,14 +344,14 @@ function commit(msg) {
                 minute: "2-digit",
               }),
           );
-          if (msg) toast(msg);
+          if (msg) toast(msg, "success");
         }
       })
       .catch(async (error) => {
         if (actor !== state.userId || epoch !== apiSaveEpoch) return;
         apiSaveEpoch++;
         updateSync("บันทึกไม่สำเร็จ · กำลังโหลดข้อมูลล่าสุด");
-        toast(error.message);
+        toast(error.message, "error");
         try {
           const latest = await apiRequest("/api/store");
           if (actor !== state.userId) return;
@@ -404,23 +496,29 @@ function shell(content) {
         u
           ? `<aside class="sidebar"><div class="sidebar-label">${a ? "จัดการพื้นที่การเรียนรู้" : "พื้นที่การเรียนรู้ของคุณ"}</div><nav class="side-nav" aria-label="เมนูหลัก">${nav.map(([id, label]) => `<button data-action="page" data-id="${id}" class="${state.page === id ? "active" : ""}" ${state.page === id ? 'aria-current="page"' : ""}><i class="fa-solid ${icons[id]}" aria-hidden="true"></i><span>${label}</span>${id === "notifications" && unread ? `<span class="nav-count">${unread}</span>` : ""}</button>`).join("")}</nav>
         <div class="sidebar-note"><span class="note-spark"><i class="fa-solid fa-sparkles fa-star" aria-hidden="true"></i></span><b>ก้าวเล็ก ๆ สู่โอกาสใหม่</b><p>ทุกการเรียนรู้ คืออีกก้าวของการเติบโต</p>${member() ? '<button class="btn small" data-action="page" data-id="workshops">สำรวจเวิร์กช็อป <span aria-hidden="true">↗</span></button>' : '<span class="sub">สร้างประสบการณ์ที่ดีไปด้วยกัน</span>'}</div>
-        <div class="sidebar-bottom">${member() ? '<button data-action="support"><i class="fa-regular fa-circle-question" aria-hidden="true"></i> แจ้งปัญหาการใช้งาน</button>' : ""}<div class="profile-card"><span class="profile-avatar">${esc(Array.from(u.name)[0])}</span><div><b>${esc(u.name)}</b><span>${a ? "เจ้าหน้าที่ดูแลระบบ" : "สมาชิก BSRU Workshop"}</span></div></div></div>
+        <div class="sidebar-bottom">${member() ? '<button data-action="support"><i class="fa-regular fa-circle-question" aria-hidden="true"></i> แจ้งปัญหาการใช้งาน</button>' : ""}<div class="profile-card">${membershipUi.avatar(u, "profile-avatar")}<div><b>${esc(u.name)}</b><span>${a ? "เจ้าหน้าที่ดูแลระบบ" : "สมาชิก BSRU Workshop"}</span></div></div></div>
       </aside>`
           : ""
       }
-      <main id="main-content" class="wrap main" tabindex="-1"><div class="page-stage">${content}</div><footer class="foot"><span>BSRU Workshop<span class="brand-dot">.</span></span><span>เรียนรู้ · สร้างสรรค์ · เติบโตไปด้วยกัน</span><span>มหาวิทยาลัยราชภัฏบ้านสมเด็จเจ้าพระยา</span></footer></main></div>`;
+      <main id="main-content" class="wrap main" tabindex="-1"><div class="page-stage">${content}</div><footer class="foot" aria-label="ข้อมูลเว็บไซต์"><div class="footer-main"><div class="footer-brand"><img src="${LOGO}" alt="" width="48" height="52" loading="lazy" decoding="async"><div><strong>BSRU Workshop<span class="brand-dot">.</span></strong><p>พื้นที่แห่งการเรียนรู้และพัฒนาทักษะ</p></div></div><div class="footer-institution"><span>ระบบจัดการอบรมและเวิร์กช็อป</span><p>มหาวิทยาลัยราชภัฏบ้านสมเด็จเจ้าพระยา</p></div></div><div class="footer-bottom"><small>© ${new Date().getFullYear()} BSRU Workshop</small><p class="footer-motto">เรียนรู้ <span aria-hidden="true">·</span> สร้างสรรค์ <span aria-hidden="true">·</span> เติบโตไปด้วยกัน</p></div></footer></main></div>`;
 }
 
 let pendingConfirm = null,
   confirmReturn = null;
 
-function askConfirm(message) {
+function askConfirm(message, tone = "info", labels = {}) {
   if (pendingConfirm) return Promise.resolve(false);
+  const danger = tone === "danger";
+  const title =
+    labels.title || (danger ? "ยืนยันการลบข้อมูล" : "ยืนยันการดำเนินการ");
+  const icon =
+    labels.icon ||
+    (danger ? "fa-regular fa-trash-can" : "fa-regular fa-circle-question");
   confirmReturn = document.activeElement;
   return new Promise((resolve) => {
     pendingConfirm = resolve;
     $("#confirm-root").innerHTML =
-      `<div class="dialog-back confirm-back"><section class="dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message"><h2 id="confirm-title">ยืนยันการดำเนินการ</h2><p id="confirm-message">${esc(message)}</p><div class="row" style="justify-content:flex-end"><button class="btn" data-action="answer-no">ไม่ใช่ / กลับไปแก้ไข</button><button class="btn primary" data-action="answer-yes">ใช่ ยืนยัน</button></div></section></div>`;
+      `<div class="dialog-back confirm-back"><section class="dialog confirm-dialog" data-tone="${danger ? "danger" : "info"}" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message"><span class="confirm-symbol" aria-hidden="true"><i class="${esc(icon)}"></i></span><h2 id="confirm-title">${esc(title)}</h2><p id="confirm-message" class="confirm-message">${esc(message)}</p><div class="confirm-actions"><button class="btn" data-action="answer-no">${esc(labels.cancelLabel || "ไม่ใช่ / กลับไปแก้ไข")}</button><button class="btn primary ${danger ? "danger" : ""}" data-action="answer-yes">${esc(labels.confirmLabel || "ใช่ ยืนยัน")}</button></div></section></div>`;
     $('#confirm-root [data-action="answer-no"]')?.focus();
   });
 }
@@ -455,6 +553,13 @@ const requestedPage = () => {
   const [page, query = ""] = (window.location?.hash || "").slice(1).split("?");
   if (page === "complaints")
     state.complaintId = new URLSearchParams(query).get("id") || null;
+  if (page === "participants") {
+    state.participantWorkshop =
+      new URLSearchParams(query).get("workshop") || "all";
+    state.participantQuery = "";
+    state.participantStatus = "all";
+    state.participantPage = 1;
+  }
   if (page === "archive") {
     const params = new URLSearchParams(query);
     state.archiveYear = Number(params.get("year")) || null;
@@ -667,6 +772,7 @@ const {
   openWorkshopMenu,
   openAttendanceMenu,
   participantsV2,
+  participantRows,
   staffDashboard,
   workshopArchive,
   workshopModal,
@@ -680,6 +786,8 @@ const membershipUi = createMembershipViews({
   closeModal,
   apiRequest,
   toast,
+  buttonFeedback,
+  askConfirm,
   onAuthenticated: acceptSession,
   onLoggedOut: showPublicHome,
   onAccount(result) {
@@ -709,7 +817,14 @@ function renderBootstrap() {
     $("#app").innerHTML =
       `<main class="app-bootstrap" data-bootstrap-error="${bootstrapError}">
         <section class="app-bootstrap-content" ${bootstrapError ? 'role="alert"' : 'role="status" aria-live="polite" aria-busy="true"'}>
-          <div class="app-bootstrap-emblem" aria-hidden="true"><span class="app-bootstrap-orbit"></span><img class="app-bootstrap-logo" src="${LOGO}" alt="" width="90" height="92"></div>
+          <div class="app-bootstrap-emblem" aria-hidden="true">
+            <span class="app-bootstrap-shadow"></span>
+            <div class="app-bootstrap-scene">
+              <span class="app-bootstrap-orbit"></span>
+              <span class="app-bootstrap-orbit app-bootstrap-orbit-secondary"></span>
+              <div class="app-bootstrap-core"><img class="app-bootstrap-logo" src="${LOGO}" alt="" width="90" height="92"></div>
+            </div>
+          </div>
           <h1>${bootstrapError ? "ขอเวลาเชื่อมต่ออีกครั้ง" : "กำลังเตรียมพื้นที่การเรียนรู้"}</h1>
           <p id="bootstrap-message"></p>
           <div class="app-bootstrap-progress" aria-hidden="true"><span></span></div>
@@ -762,6 +877,7 @@ function render() {
     state.page,
     state.page === "archive" ? state.archiveWorkshop || "list" : "",
     state.page === "complaints" ? state.complaintId || "list" : "",
+    state.page === "participants" ? state.participantWorkshop : "",
   ].join(":");
   const changed = view !== previousView;
   const hadView = previousView !== null;
@@ -781,13 +897,18 @@ function render() {
         ? archiveHash()
         : state.page === "complaints" && staff() && state.complaintId
           ? `#complaints?id=${encodeURIComponent(state.complaintId)}`
-          : "#" + state.page;
+          : state.page === "participants" &&
+              staff() &&
+              state.participantWorkshop !== "all"
+            ? `#participants?workshop=${encodeURIComponent(state.participantWorkshop)}`
+            : "#" + state.page;
     if (window.location.hash !== hash) window.history.pushState(null, "", hash);
   }
   previousView = view;
 }
 
 function openModal(title, body) {
+  membershipUi.releasePhoto();
   releaseWorkshopPreview();
   workshopTimePicker.close();
   workshopDateRangePicker.close();
@@ -802,6 +923,7 @@ function openModal(title, body) {
 }
 
 function closeModal() {
+  membershipUi.releasePhoto();
   const notificationsOpen = Boolean($("#notification-center"));
   workshopTimePicker.close();
   workshopDateRangePicker.close();
@@ -814,10 +936,22 @@ function closeModal() {
   else $("#app button")?.focus();
 }
 
-function confirmModal(msg, action, id) {
+function confirmModal(msg, action, id, workshop = null) {
+  const selectedWorkshop = workshop
+    ? `<section class="confirm-workshop" aria-labelledby="confirm-workshop-title"><img class="confirm-workshop-cover ${workshop.cover ? "" : "is-placeholder"}" src="${esc(workshop.cover || LOGO)}" alt="" width="80" height="88" decoding="async"><div class="confirm-workshop-info"><span class="confirm-workshop-label">เวิร์คช็อปที่เลือก</span><h3 id="confirm-workshop-title">${esc(workshop.title)}</h3><div class="confirm-workshop-meta"><span><i class="fa-regular fa-calendar" aria-hidden="true"></i><span>${esc(fmt(workshop.start))}<span class="confirm-workshop-end">ถึง ${esc(fmt(workshop.end))}</span></span></span><span><i class="fa-solid fa-location-dot" aria-hidden="true"></i><span>${esc(workshop.place || "ยังไม่ระบุสถานที่")}</span></span></div></div></section>`
+    : "";
   openModal(
-    "ยืนยันการดำเนินการ",
-    `<p>${esc(msg)}</p><div class="row" style="justify-content:flex-end"><button class="btn" data-action="close">ไม่ใช่</button><button class="btn primary" data-action="${action}" data-id="${id}">ใช่</button></div>`,
+    workshop ? "ยืนยันการลงทะเบียน" : "ยืนยันการดำเนินการ",
+    `<div class="action-confirm-body">${workshop ? selectedWorkshop : '<span class="confirm-symbol" aria-hidden="true"><i class="fa-regular fa-circle-question"></i></span>'}<p id="action-confirm-message" class="confirm-message">${esc(msg)}</p><div class="confirm-actions"><button class="btn" data-action="close">ไม่ใช่</button><button class="btn primary" data-action="${esc(action)}" data-id="${esc(id)}">ใช่ ยืนยัน</button></div></div>`,
+  );
+  const dialog = $("#modal-root .dialog");
+  dialog.classList.add("action-confirm-dialog");
+  dialog.setAttribute("role", "alertdialog");
+  dialog.setAttribute(
+    "aria-describedby",
+    workshop
+      ? "action-confirm-message confirm-workshop-title"
+      : "action-confirm-message",
   );
 }
 
@@ -891,12 +1025,38 @@ document.addEventListener("click", async (e) => {
   if (a === "answer-yes" || a === "answer-no")
     return finishConfirm(a === "answer-yes");
   if (pendingConfirm) return;
+  if (a === "participants-back" && staff()) {
+    const selected = state.participantWorkshop;
+    state.participantWorkshop = "all";
+    state.participantQuery = "";
+    state.participantStatus = "all";
+    state.participantPage = 1;
+    render();
+    [...document.querySelectorAll(".participant-workshop-open")]
+      .find((button) => button.dataset.id === selected)
+      ?.focus();
+    return;
+  }
+  if (
+    ["participant-workshop-page", "participant-page"].includes(a) &&
+    staff()
+  ) {
+    const page = Number(id);
+    if (!Number.isSafeInteger(page) || page < 1) return;
+    if (a === "participant-workshop-page") state.participantWorkshopPage = page;
+    else state.participantPage = page;
+    render();
+    window.scrollTo({ top: 0, behavior: "auto" });
+    $("#main-content")?.focus({ preventScroll: true });
+    return;
+  }
   if (recordsUi.isAction(a)) return recordsUi.handleAction(a, id);
   if (staff() && a === "attendance-pending") {
     state.participantWorkshop = id;
     state.page = "participants";
     state.participantQuery = "";
     state.participantStatus = "PENDING";
+    state.participantPage = 1;
     return render();
   }
   if (staff() && a === "finalize-attendance") {
@@ -931,10 +1091,10 @@ document.addEventListener("click", async (e) => {
       state.archiveParticipantStatus = "all";
       state.archiveParticipantPage = 1;
       state.page = "archive";
-      toast("ยืนยันผลและเก็บเข้าประวัติแล้ว");
+      toast("ยืนยันผลและเก็บเข้าประวัติแล้ว", "success");
     } catch (error) {
       if (actor !== state.userId || epoch !== apiSaveEpoch) return;
-      toast(error.message);
+      toast(error.message, "error");
       if (error.status === 409) {
         const latest = await apiRequest("/api/store").catch(() => null);
         if (latest && actor === state.userId && epoch === apiSaveEpoch) {
@@ -1082,32 +1242,22 @@ document.addEventListener("click", async (e) => {
     return refreshNotifications();
   }
   if (a === "export-participants" && staff()) {
-    const query = state.participantQuery.toLowerCase();
-    const rows = store.registrations
-      .filter((r) => {
-        const u = store.users.find((x) => x.id === r.userId);
-        return (
-          (state.participantWorkshop === "all" ||
-            r.workshopId === state.participantWorkshop) &&
-          (state.participantStatus === "all" ||
-            r.status === state.participantStatus) &&
-          (!query ||
-            `${u?.name || ""} ${u?.code || ""} ${u?.email || ""}`
-              .toLowerCase()
-              .includes(query))
-        );
-      })
-      .map((r) => {
-        const u = store.users.find((x) => x.id === r.userId);
-        const w = store.workshops.find((x) => x.id === r.workshopId);
-        return [
-          u?.name || "",
-          u?.code || "",
-          u?.email || "",
-          w?.title || "",
-          labels[r.status] || r.status,
-        ];
-      });
+    const workshop = store.workshops.find(
+      (w) => w.id === state.participantWorkshop,
+    );
+    if (!workshop)
+      return toast("กรุณาเลือกเวิร์คช็อปก่อน Export รายชื่อ", "warning");
+    const users = new Map(store.users.map((u) => [u.id, u]));
+    const rows = participantRows().map((r) => {
+      const u = users.get(r.userId);
+      return [
+        u?.name || "",
+        u?.code || "",
+        u?.email || "",
+        workshop.title,
+        labels[r.status] || r.status,
+      ];
+    });
     downloadCsv("bsru-participants.csv", [
       ["ชื่อ", "รหัสประจำตัว", "อีเมล", "เวิร์กช็อป", "สถานะ"],
       ...rows,
@@ -1172,6 +1322,14 @@ document.addEventListener("click", async (e) => {
   if (a === "page") {
     if (id === "notifications") return openNotifications();
     state.page = id;
+    if (id === "participants") {
+      state.participantWorkshop = "all";
+      state.participantWorkshopQuery = "";
+      state.participantWorkshopPage = 1;
+      state.participantPage = 1;
+      state.participantQuery = "";
+      state.participantStatus = "all";
+    }
     state.complaintId = null;
     if (id === "archive") state.archiveWorkshop = null;
     state.view = id === "mine" ? "mine" : "open";
@@ -1243,6 +1401,9 @@ document.addEventListener("click", async (e) => {
     return commit("ขอบคุณสำหรับการประเมินความรู้สึกหลังใช้งาน");
   }
   if (a === "enroll" && member()) {
+    const workshop = store.workshops.find((item) => item.id === id);
+    if (!workshop)
+      return toast("ไม่พบเวิร์คช็อปที่เลือก กรุณาลองใหม่", "warning");
     const r = store.registrations.find(
       (r) => r.userId === state.userId && r.workshopId === id,
     );
@@ -1252,6 +1413,7 @@ document.addEventListener("click", async (e) => {
         : "ยืนยันการลงทะเบียนเวิร์กช็อปนี้หรือไม่?",
       "confirm-enroll",
       id,
+      workshop,
     );
   }
   if (a === "confirm-enroll") return enroll(id);
@@ -1279,15 +1441,20 @@ document.addEventListener("click", async (e) => {
     if (!w) return toast("ไม่พบเวิร์กช็อป");
     openModal(
       "ลบเวิร์กช็อป",
-      `<p>ต้องการลบเวิร์กช็อป “${esc(w.title)}” หรือไม่?</p><p class="notice">รายชื่อผู้ลงทะเบียน ผลประเมิน และชั่วโมงอบรมของกิจกรรมนี้จะถูกลบถาวร และไม่สามารถกู้คืนได้</p><p class="sub">ระบบจะเก็บชื่อกิจกรรม วันจัด และผู้ลบไว้ใน “กิจกรรมที่ลบไปแล้ว” สำหรับแอดมิน</p><div class="row" style="justify-content:flex-end"><button class="btn" data-action="close">ยกเลิก</button><button class="btn danger" data-action="confirm-delete-workshop" data-id="${esc(id)}">ยืนยันลบ</button></div>`,
+      `<div class="action-confirm-body"><span class="confirm-symbol" aria-hidden="true"><i class="fa-regular fa-trash-can"></i></span><p id="delete-workshop-message" class="confirm-message">ต้องการลบเวิร์กช็อป “${esc(w.title)}” หรือไม่?</p><p class="notice">รายชื่อผู้ลงทะเบียน ผลประเมิน และชั่วโมงอบรมของกิจกรรมนี้จะถูกลบถาวร และไม่สามารถกู้คืนได้</p><p class="sub">ระบบจะเก็บชื่อกิจกรรม วันจัด และผู้ลบไว้ใน “กิจกรรมที่ลบไปแล้ว” สำหรับแอดมิน</p><div class="confirm-actions"><button class="btn" data-action="close">ยกเลิก</button><button class="btn primary danger" data-action="confirm-delete-workshop" data-id="${esc(id)}">ยืนยันลบ</button></div></div>`,
     );
+    const dialog = $("#modal-root .dialog");
+    dialog.classList.add("action-confirm-dialog");
+    dialog.dataset.tone = "danger";
+    dialog.setAttribute("role", "alertdialog");
+    dialog.setAttribute("aria-describedby", "delete-workshop-message");
     return;
   }
   if (a === "confirm-delete-workshop") {
     if (b.disabled) return;
     const buttons = [...document.querySelectorAll("#modal-root button")];
     buttons.forEach((button) => (button.disabled = true));
-    b.textContent = "กำลังลบ…";
+    buttonFeedback(b, "loading", "กำลังลบ…");
     const actor = state.userId,
       epoch = apiSaveEpoch;
     apiSaveCount++;
@@ -1304,11 +1471,11 @@ document.addEventListener("click", async (e) => {
       closeModal();
       render();
       updateSync("บันทึกแล้ว");
-      toast("ลบเวิร์กช็อปแล้ว");
+      toast("ลบเวิร์กช็อปแล้ว", "success");
     } catch (error) {
       if (actor !== state.userId || epoch !== apiSaveEpoch) return;
       updateSync("ลบไม่สำเร็จ");
-      toast(error.message);
+      toast(error.message, "error");
       if (error.status === 409) {
         const latest = await apiRequest("/api/store").catch(() => null);
         if (latest && actor === state.userId && epoch === apiSaveEpoch) {
@@ -1320,7 +1487,7 @@ document.addEventListener("click", async (e) => {
     } finally {
       apiSaveCount--;
       buttons.forEach((button) => (button.disabled = false));
-      b.textContent = "ยืนยันลบ";
+      if (b.isConnected) buttonFeedback(b, "idle");
     }
     return;
   }
@@ -1367,10 +1534,13 @@ document.addEventListener("click", async (e) => {
     return workshopModal(id);
   }
   if (a === "participants-for") {
+    if (!store.workshops.some((w) => w.id === id))
+      return toast("ไม่พบเวิร์คช็อปที่เลือก กรุณาเลือกรายการใหม่", "warning");
     state.participantWorkshop = id;
     state.page = "participants";
     state.participantQuery = "";
     state.participantStatus = "all";
+    state.participantPage = 1;
     return render();
   }
 
@@ -1496,22 +1666,27 @@ document.addEventListener("change", (e) => {
     state.managePage = 1;
     render();
   }
-  if (e.target.id === "participant-filter") {
-    state.participantWorkshop = e.target.value;
-    render();
-  }
-
   if (e.target.id === "approval-status") {
     state.approvalStatus = e.target.value;
     render();
   }
   if (e.target.id === "participant-status") {
     state.participantStatus = e.target.value;
+    state.participantPage = 1;
     render();
   }
 });
 
 document.addEventListener("input", (e) => {
+  if (e.target.id === "participant-workshop-search" && staff()) {
+    const pos = e.target.selectionStart;
+    state.participantWorkshopQuery = e.target.value;
+    state.participantWorkshopPage = 1;
+    render();
+    $("#participant-workshop-search")?.focus();
+    $("#participant-workshop-search")?.setSelectionRange?.(pos, pos);
+    return;
+  }
   if (recordsUi.input(e)) return;
   if (
     staff() &&
@@ -1557,6 +1732,7 @@ document.addEventListener("input", (e) => {
   if (e.target.id === "participant-search") {
     const pos = e.target.selectionStart;
     state.participantQuery = e.target.value;
+    state.participantPage = 1;
     render();
     $("#participant-search")?.focus();
     $("#participant-search")?.setSelectionRange?.(pos, pos);
@@ -1711,7 +1887,8 @@ document.addEventListener("submit", async (e) => {
   for (const k of Object.keys(d))
     if (typeof d[k] === "string") d[k] = d[k].trim();
   const submit = f.querySelector('button[type="submit"],button:not([type])');
-  if (submit) submit.disabled = true;
+  if (submit?.disabled) return;
+  buttonFeedback(submit, "loading", "กำลังตรวจสอบข้อมูล…");
   const err = f.querySelector(".error");
   if (err) err.textContent = "";
   const portalAtSubmit = state.portal,
@@ -1894,9 +2071,9 @@ document.addEventListener("submit", async (e) => {
     }
   } catch (error) {
     if (err?.isConnected) err.textContent = error.message;
-    else toast(error.message);
+    else toast(error.message, "error");
   } finally {
-    if (submit?.isConnected) submit.disabled = false;
+    if (submit?.isConnected) buttonFeedback(submit, "idle");
   }
 });
 
@@ -1932,9 +2109,12 @@ async function initializeLocalApp() {
 async function acceptSession(session, restoreRoute = false) {
   const epoch = ++apiSaveEpoch;
   apiCsrf = session.csrf;
-  const latest = await apiRequest("/api/store");
+  const latest = session.store
+    ? { store: session.store }
+    : await apiRequest("/api/store");
   if (epoch !== apiSaveEpoch) return;
   Object.assign(store, latest.store);
+  updateSync("เชื่อมต่อแล้ว");
   state.userId = session.user.id;
   state.portal = session.user.role;
   const notificationsRoute =
@@ -1971,8 +2151,10 @@ async function showPublicHome() {
   try {
     store.workshops = (await apiRequest("/api/workshops")).workshops;
     render();
+    return true;
   } catch {
-    toast("โหลดกิจกรรมล่าสุดไม่สำเร็จ กรุณาลองอีกครั้ง");
+    toast("โหลดกิจกรรมล่าสุดไม่สำเร็จ กรุณาลองอีกครั้ง", "error");
+    return false;
   }
 }
 
@@ -1980,6 +2162,8 @@ function startApiPolling() {
   if (apiPollTimer) return;
   apiPollTimer = setInterval(async () => {
     if (
+      apiPolling ||
+      document.visibilityState === "hidden" ||
       !apiCsrf ||
       apiSaveCount ||
       pendingConfirm ||
@@ -1988,10 +2172,19 @@ function startApiPolling() {
       document.activeElement?.matches?.("input,textarea,select")
     )
       return;
-    const actor = state.userId;
+    const actor = state.userId,
+      epoch = apiSaveEpoch;
+    apiPolling = true;
     try {
       const latest = await apiRequest("/api/store");
-      if (actor !== state.userId || !apiCsrf) return;
+      if (
+        actor !== state.userId ||
+        epoch !== apiSaveEpoch ||
+        !apiCsrf ||
+        apiSaveCount ||
+        document.activeElement?.matches?.("input,textarea,select")
+      )
+        return;
       if (latest.store.revision > store.revision) {
         const account = latest.store.users.find((item) => item.id === actor);
         const roleChanged = account && account.role !== state.portal;
@@ -2007,10 +2200,13 @@ function startApiPolling() {
       }
       refreshNotifications({ background: true });
     } catch (error) {
+      if (actor !== state.userId || epoch !== apiSaveEpoch) return;
       if (error.status === 401) {
         await showPublicHome();
-        toast("เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง");
+        toast("เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง", "warning");
       } else updateSync("เชื่อมต่อขัดข้อง · กำลังลองใหม่");
+    } finally {
+      apiPolling = false;
     }
   }, 15000);
 }

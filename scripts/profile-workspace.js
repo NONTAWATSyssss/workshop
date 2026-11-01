@@ -18,12 +18,13 @@ const database = require("../tests/helpers/test-database");
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const call = async (path, body, cookie) => {
+  const call = async (path, body, cookie, csrf) => {
     const response = await fetch(origin + path, {
       method: body === undefined ? "GET" : "POST",
       headers: {
         "Content-Type": "application/json",
         ...(cookie ? { Cookie: cookie } : {}),
+        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
@@ -55,8 +56,9 @@ const database = require("../tests/helpers/test-database");
     const user = (
       await db.prepare("SELECT id FROM users WHERE email=?").get(account.email)
     ).id;
-    const cover =
-      "data:image/png;base64," + Buffer.alloc(750000, 1).toString("base64");
+    const image = Buffer.alloc(750000, 1);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(image);
+    const cover = "data:image/png;base64," + image.toString("base64");
     await db
       .prepare(
         "INSERT INTO workshops(id,title,cover,start_at,end_at,place,capacity,hours) VALUES('perf-workshop','Performance fixture',?,'2099-01-01T02:00Z','2099-01-01T05:00Z','Room',30,3)",
@@ -95,6 +97,60 @@ const database = require("../tests/helpers/test-database");
           bytes,
           simulatedRoundTripMs: 10,
         }) + "\n",
+      );
+    }
+    await db.prepare("UPDATE users SET role='staff' WHERE id=?").run(user);
+    await db
+      .prepare(
+        `INSERT INTO workshops(id,title,start_at,end_at,place,capacity,hours)
+      SELECT 'load-'||n,'Load fixture '||n,'2099-02-01T02:00Z','2099-02-01T05:00Z','Room',30,3 FROM generate_series(1,40) n`,
+      )
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO complaints(id,user_id,issue,detail,status)
+      SELECT 'load-complaint-'||n,?,'Load fixture','Example detail','REPLIED' FROM generate_series(1,30) n`,
+      )
+      .run(user);
+    await db
+      .prepare(
+        `INSERT INTO complaint_replies(id,complaint_id,staff_id,message)
+      SELECT 'load-reply-'||n||'-'||r,'load-complaint-'||n,?,'Example reply' FROM generate_series(1,30) n CROSS JOIN generate_series(1,2) r`,
+      )
+      .run(user);
+    queries = [];
+    let start = performance.now();
+    await db.withRequest(() => storeFactory.refreshSnapshot());
+    console.log(
+      JSON.stringify({
+        path: "snapshot-refresh",
+        workshops: 41,
+        complaints: 30,
+        replies: 60,
+        statements: queries.length,
+        ms: Math.round(performance.now() - start),
+        simulatedRoundTripMs: 10,
+      }),
+    );
+    let workspace = (await call("/api/store", undefined, cookie)).body.store;
+    for (let i = 0; i < 3; i++) {
+      workspace.workshops.find((item) => item.id === "load-1").title =
+        `Edited fixture ${i}`;
+      workspace.revision++;
+      queries = [];
+      start = performance.now();
+      workspace = (
+        await call("/api/store", { store: workspace }, cookie, login.body.csrf)
+      ).body.store;
+      console.log(
+        JSON.stringify({
+          path: "single-workshop-edit",
+          sample: i + 1,
+          workshops: 41,
+          statements: queries.length,
+          ms: Math.round(performance.now() - start),
+          simulatedRoundTripMs: 10,
+        }),
       );
     }
   } finally {

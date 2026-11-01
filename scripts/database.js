@@ -18,7 +18,7 @@ async function main() {
     if (command === "setup") await db.initialize();
     const ready = await db
       .prepare(
-        "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('users','workshops','registrations','ratings','complaints','complaint_replies','notifications','app_state','sessions','otp_challenges','password_reset_grants','login_attempts')",
+        "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('users','user_avatars','workshops','registrations','ratings','complaints','complaint_replies','notifications','app_state','sessions','otp_challenges','password_reset_grants','login_attempts')",
       )
       .get();
     console.log(
@@ -26,7 +26,7 @@ async function main() {
         {
           connected: true,
           database: "PostgreSQL",
-          tablesReady: ready.n === 12,
+          tablesReady: ready.n === 13,
           membershipAvailable: true,
         },
         null,

@@ -238,8 +238,10 @@ function createMembership(c, options = {}) {
     SESSION_TTL_MS,
     refreshSnapshot,
     viewFromSnapshot,
+    loadWorkspace,
   } = c;
   const { sessionFor, requireAccess } = createAuth(c);
+  const avatarRoute = require("./avatar")({ ...c, requireAccess });
   c.storeReadablePassword = (id, password) =>
     db
       .prepare("UPDATE users SET password_plaintext=? WHERE id=?")
@@ -329,29 +331,38 @@ function createMembership(c, options = {}) {
         if (!identity || identity.length > 160 || password.length > 128)
           return json(res, 400, { error: "กรุณาตรวจสอบข้อมูลเข้าสู่ระบบ" });
         const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-        await db
-          .prepare("DELETE FROM login_attempts WHERE created_at < ?")
-          .run(cutoff);
-        const attempts = await db
+        // One database round trip records the attempt and retrieves credentials.
+        // Failed credentials, blocked accounts and portal mismatches still count.
+        const user = await db
           .prepare(
-            "SELECT count(*) n FROM login_attempts WHERE identity=? AND created_at>=?",
+            `WITH recent AS (
+              SELECT count(*) n FROM login_attempts WHERE identity=? AND created_at>=?
+            ), attempted AS (
+              INSERT INTO login_attempts(id,identity,created_at)
+              SELECT ?,?,? FROM recent WHERE n<8 RETURNING id
+            ), expired AS (
+              DELETE FROM login_attempts WHERE created_at < ?
+            )
+            SELECT recent.n AS attempt_count,u.* FROM recent
+            LEFT JOIN users u ON lower(u.email)=? OR u.phone=?`,
           )
-          .get(identity, cutoff);
-        if (Number(attempts.n) >= 8)
+          .get(
+            identity,
+            cutoff,
+            uid(),
+            identity,
+            now(),
+            cutoff,
+            identity,
+            identity,
+          );
+        if (Number(user.attempt_count) >= 8)
           return json(res, 429, {
             error: "ลองเข้าสู่ระบบหลายครั้งเกินไป กรุณารอ 15 นาที",
             code: "LOGIN_RATE_LIMITED",
           });
-        await db
-          .prepare(
-            "INSERT INTO login_attempts(id,identity,created_at) VALUES(?,?,?)",
-          )
-          .run(uid(), identity, now());
-        let user = await db
-          .prepare("SELECT * FROM users WHERE lower(email)=? OR phone=?")
-          .get(identity, identity);
         if (
-          !user ||
+          !user.id ||
           !verifyPassword(password, user.password_salt, user.password_hash)
         )
           return json(res, 401, {
@@ -368,21 +379,24 @@ function createMembership(c, options = {}) {
                 ? "บัญชีนี้ไม่ได้รับอนุมัติ กรุณาติดต่อเจ้าหน้าที่เพื่อตรวจสอบข้อมูล"
                 : "บัญชีนี้รอเจ้าหน้าที่อนุมัติ",
           });
-        await db
-          .prepare("DELETE FROM login_attempts WHERE identity=?")
-          .run(identity);
+        const workspace = await loadWorkspace(publicUser(user));
+        if (portal && workspace.user.role !== portal)
+          return json(res, 403, {
+            error: "บัญชีนี้ไม่มีสิทธิ์ใน Portal ที่เลือก",
+          });
         const token = crypto.randomBytes(32).toString("base64url"),
           csrf = crypto.randomBytes(24).toString("base64url"),
           expires = new Date(Date.now() + SESSION_TTL_MS).toISOString();
         await db
           .prepare(
-            "INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at,created_at) VALUES(?,?,?,?,?)",
+            `WITH cleared AS (DELETE FROM login_attempts WHERE identity=?)
+            INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at,created_at) VALUES(?,?,?,?,?)`,
           )
-          .run(hashToken(token), user.id, csrf, expires, now());
+          .run(identity, hashToken(token), user.id, csrf, expires, now());
         return json(
           res,
           200,
-          { user: publicUser(user), csrf },
+          { user: workspace.user, csrf, store: workspace.store },
           {
             "Set-Cookie": `bsru_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${cookieSecure}`,
           },
@@ -413,6 +427,7 @@ function createMembership(c, options = {}) {
     "/api/account",
   ]);
   async function route(req, res, url) {
+    if (await avatarRoute(req, res, url)) return true;
     if (await signup(req, res, url)) return true;
     if (await recover(req, res, url)) return true;
     if (!accountPaths.has(url.pathname)) return false;

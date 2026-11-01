@@ -46,6 +46,9 @@ const publicUser = (row) => ({
   major: row.major,
   status: row.status,
   role: row.role,
+  avatar: row.avatar_version
+    ? `/api/avatars/${encodeURIComponent(row.id)}?v=${row.avatar_version}`
+    : "",
 });
 const workshopCoverUrl = (id, version) =>
   `/api/workshops/${encodeURIComponent(id)}/cover?v=${version}`;

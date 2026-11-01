@@ -1,17 +1,18 @@
 "use strict";
 const { isDeepStrictEqual } = require("node:util");
 
-module.exports = function createStore({
-  db,
-  readJson,
-  workshopTime,
-  workshopTimestamp,
-  localDateInput,
-  publicUser,
-  now,
-  validCover,
-  publicWorkshopCover,
-}) {
+module.exports = function createStore(context) {
+  const {
+    db,
+    readJson,
+    workshopTime,
+    workshopTimestamp,
+    localDateInput,
+    publicUser,
+    now,
+    validCover,
+    publicWorkshopCover,
+  } = context;
   async function workshopRows() {
     return await db
       .prepare(
@@ -19,11 +20,12 @@ module.exports = function createStore({
       )
       .all();
   }
-  async function stateFromDb(role, userId) {
-    const staff = role === "staff";
-    const users = staff
-      ? await db.prepare("SELECT * FROM users ORDER BY created_at").all()
-      : await db.prepare("SELECT * FROM users WHERE id=?").all(userId);
+  async function stateFromDb() {
+    const users = await db
+      .prepare(
+        "SELECT id,name,type,code,email,phone,faculty,major,status,role,avatar_version FROM users ORDER BY created_at",
+      )
+      .all();
     const workshops = (
       await db.prepare("SELECT * FROM workshops ORDER BY start_at").all()
     ).map((w) => ({
@@ -40,38 +42,34 @@ module.exports = function createStore({
       icon: "fa-graduation-cap",
       category: "BSRU WORKSHOP",
     }));
-    const registrations = staff
-      ? await db
-          .prepare("SELECT * FROM registrations ORDER BY created_at")
-          .all()
-      : await db
-          .prepare(
-            "SELECT * FROM registrations WHERE user_id=? ORDER BY created_at",
-          )
-          .all(userId);
-    const complaints = staff
-      ? await db
-          .prepare("SELECT * FROM complaints ORDER BY created_at DESC")
-          .all()
-      : await db
-          .prepare(
-            "SELECT * FROM complaints WHERE user_id=? ORDER BY created_at DESC",
-          )
-          .all(userId);
-    const ratings = staff
-      ? await db.prepare("SELECT * FROM ratings ORDER BY created_at").all()
-      : await db
-          .prepare("SELECT * FROM ratings WHERE user_id=? ORDER BY created_at")
-          .all(userId);
-    const notifications = staff
-      ? await db
-          .prepare("SELECT * FROM notifications ORDER BY created_at DESC")
-          .all()
-      : await db
-          .prepare(
-            "SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC",
-          )
-          .all(userId);
+    const registrations = await db
+      .prepare("SELECT * FROM registrations ORDER BY created_at")
+      .all();
+    const complaints = await db
+      .prepare("SELECT * FROM complaints ORDER BY created_at DESC")
+      .all();
+    const ratings = await db
+      .prepare("SELECT * FROM ratings ORDER BY created_at")
+      .all();
+    const notifications = await db
+      .prepare("SELECT * FROM notifications ORDER BY created_at DESC")
+      .all();
+    const repliesByComplaint = new Map();
+    for (const reply of await db
+      .prepare(
+        `SELECT r.*,u.name AS staff_name FROM complaint_replies r LEFT JOIN users u ON u.id=r.staff_id ORDER BY r.created_at,r.id`,
+      )
+      .all()) {
+      const replies = repliesByComplaint.get(reply.complaint_id) || [];
+      replies.push({
+        id: reply.id,
+        staffId: reply.staff_id,
+        staffName: reply.staff_name || "",
+        text: reply.message,
+        createdAt: reply.created_at,
+      });
+      repliesByComplaint.set(reply.complaint_id, replies);
+    }
     return {
       users: users.map(publicUser),
       auditLog: [],
@@ -85,39 +83,18 @@ module.exports = function createStore({
         updatedAt: r.updated_at,
         ratingEvent: r.id,
       })),
-      complaints: await Promise.all(
-        complaints.map(async (c) => ({
-          id: c.id,
-          userId: c.user_id,
-          issue: c.issue,
-          detail: c.detail,
-          status: c.status,
-          createdAt: c.created_at,
-          learnerTrashedAt: c.learner_trashed_at,
-          learnerDeletedAt: c.learner_deleted_at,
-          staffClearedAt: c.staff_cleared_at,
-          replies: await Promise.all(
-            (
-              await db
-                .prepare(
-                  "SELECT * FROM complaint_replies WHERE complaint_id=? ORDER BY created_at",
-                )
-                .all(c.id)
-            ).map(async (r) => ({
-              id: r.id,
-              staffId: r.staff_id,
-              staffName:
-                (
-                  await db
-                    .prepare("SELECT name FROM users WHERE id=?")
-                    .get(r.staff_id)
-                )?.name || "",
-              text: r.message,
-              createdAt: r.created_at,
-            })),
-          ),
-        })),
-      ),
+      complaints: complaints.map((c) => ({
+        id: c.id,
+        userId: c.user_id,
+        issue: c.issue,
+        detail: c.detail,
+        status: c.status,
+        createdAt: c.created_at,
+        learnerTrashedAt: c.learner_trashed_at,
+        learnerDeletedAt: c.learner_deleted_at,
+        staffClearedAt: c.staff_cleared_at,
+        replies: repliesByComplaint.get(c.id) || [],
+      })),
       ratings: ratings.map((r) => ({
         id: r.id,
         eventId: r.registration_id,
@@ -163,7 +140,7 @@ module.exports = function createStore({
           "Invalid app_state document; restore a valid database backup.",
         );
       if (collections.some((key) => !Array.isArray(snapshot[key]))) {
-        const relational = await stateFromDb("staff", "admin");
+        const relational = await stateFromDb();
         for (const key of collections)
           if (!Array.isArray(snapshot[key])) snapshot[key] = relational[key];
         snapshot.revision = existing.revision;
@@ -181,7 +158,7 @@ module.exports = function createStore({
           .run(JSON.stringify(snapshot), now());
       return;
     }
-    const initial = await stateFromDb("staff", "admin");
+    const initial = await stateFromDb();
     await db
       .prepare(
         "INSERT INTO app_state(id,revision,data_json,updated_at) VALUES(1,?,?,?)",
@@ -201,14 +178,19 @@ module.exports = function createStore({
         complaints: snapshot.complaints.filter((item) => !item.staffClearedAt),
       };
     const onlyMine = (items) => items.filter((item) => item.userId === user.id);
+    const occupancy = new Map();
+    for (const registration of snapshot.registrations)
+      if (registration.status !== "CANCELLED")
+        occupancy.set(
+          registration.workshopId,
+          (occupancy.get(registration.workshopId) || 0) + 1,
+        );
     return {
       ...snapshot,
       auditLog: [],
       workshops: workshops.map((workshop) => ({
         ...workshop,
-        occupancy: snapshot.registrations.filter(
-          (r) => r.workshopId === workshop.id && r.status !== "CANCELLED",
-        ).length,
+        occupancy: occupancy.get(workshop.id) || 0,
       })),
       users: snapshot.users.filter((item) => item.id === user.id),
       registrations: onlyMine(snapshot.registrations),
@@ -226,22 +208,43 @@ module.exports = function createStore({
 
   async function inspectSnapshot() {
     const row = await db
-      .prepare("SELECT revision,data_json FROM app_state WHERE id=1")
+      .prepare(
+        `SELECT revision,data_json,
+          COALESCE((SELECT json_agg(profile ORDER BY profile.created_at)
+            FROM (SELECT id,name,type,code,email,phone,faculty,major,status,role,avatar_version,created_at FROM users) profile), '[]'::json) AS profiles
+          FROM app_state WHERE id=1`,
+      )
       .get();
     const snapshot = readJson(row.data_json);
-    const users = (
-      await db
-        .prepare(
-          "SELECT id,name,type,code,email,phone,faculty,major,status,role FROM users ORDER BY created_at",
-        )
-        .all()
-    ).map(publicUser);
+    const users = readJson(row.profiles).map(publicUser);
     return {
       snapshot,
       users,
       usersChanged: !isDeepStrictEqual(snapshot.users, users),
       revision: Number(row.revision),
     };
+  }
+
+  // Login and workspace refresh must apply the same profile/retention checks.
+  async function loadWorkspace(account) {
+    const inspected = await inspectSnapshot();
+    let snapshot = inspected.snapshot;
+    if (inspected.usersChanged || context.complaintMaintenanceDue(snapshot)) {
+      await db.exec("BEGIN IMMEDIATE");
+      try {
+        snapshot = await context.maintainComplaints(await syncUsersSnapshot());
+        await db.exec("COMMIT");
+      } catch (error) {
+        await db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    const user = snapshot.users.find((item) => item.id === account.id);
+    if (!user || user.status !== "APPROVED")
+      throw Object.assign(new Error("กรุณาเข้าสู่ระบบอีกครั้ง"), {
+        status: 401,
+      });
+    return { user, store: viewFromSnapshot(snapshot, user) };
   }
 
   // Caller holds the shared write lock so profile changes cannot race snapshot saves.
@@ -263,7 +266,7 @@ module.exports = function createStore({
       .prepare("SELECT revision,data_json FROM app_state WHERE id=1")
       .get();
     const previous = readJson(row.data_json);
-    const next = await stateFromDb("staff", "admin");
+    const next = await stateFromDb();
     next.auditLog = Array.isArray(previous.auditLog) ? previous.auditLog : [];
     next.workshops = next.workshops.map((workshop) => {
       const old = previous.workshops.find((item) => item.id === workshop.id);
@@ -327,6 +330,7 @@ module.exports = function createStore({
         new Error("ข้อมูลเปลี่ยนจากอีกหน้าต่างแล้ว กรุณาโหลดหน้าใหม่"),
         { status: 409 },
       );
+    incoming.revision = Number(currentRow.revision) + 1;
     // Audit entries are generated from validated changes on the server.
     incoming.auditLog = current.auditLog || [];
     const oldAudit = Array.isArray(current.auditLog) ? current.auditLog : [];
@@ -443,6 +447,7 @@ module.exports = function createStore({
         const old = oldWorkshops.get(w.id);
         if (
           old &&
+          Number(w.capacity) < Number(old.capacity) &&
           Number(w.capacity) <
             (
               await db
@@ -818,30 +823,36 @@ module.exports = function createStore({
       }
     }
     incoming.auditLog = [...changes, ...oldAudit];
-    return incoming;
+    return { snapshot: incoming, previous: current };
   }
-  async function writeSnapshot(snapshot) {
+  async function writeSnapshot(snapshot, previous) {
+    const changed = (collection) => {
+      const oldRows = new Map(
+        previous[collection].map((item) => [item.id, item]),
+      );
+      return snapshot[collection].filter(
+        (item) => !equalJson(oldRows.get(item.id), item),
+      );
+    };
     const upUser = db.prepare(
       `UPDATE users SET name=?,type=?,code=?,email=?,phone=?,faculty=?,major=?,status=? WHERE id=?`,
     );
-    const userExists = db.prepare("SELECT id FROM users WHERE id=?");
-    for (const u of snapshot.users)
-      if (await userExists.get(u.id))
-        await upUser.run(
-          u.name,
-          u.type,
-          u.code,
-          u.email,
-          u.phone,
-          u.faculty,
-          u.major,
-          u.status,
-          u.id,
-        );
+    for (const u of changed("users"))
+      await upUser.run(
+        u.name,
+        u.type,
+        u.code,
+        u.email,
+        u.phone,
+        u.faculty,
+        u.major,
+        u.status,
+        u.id,
+      );
     const upWorkshop = db.prepare(
       `INSERT INTO workshops(id,title,description,cover,start_at,end_at,place,capacity,hours,closed,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,cover=excluded.cover,start_at=excluded.start_at,end_at=excluded.end_at,place=excluded.place,capacity=excluded.capacity,hours=excluded.hours,closed=excluded.closed`,
     );
-    for (const w of snapshot.workshops)
+    for (const w of changed("workshops"))
       await upWorkshop.run(
         w.id,
         w.title,
@@ -858,7 +869,7 @@ module.exports = function createStore({
     const upReg = db.prepare(
       `INSERT INTO registrations(id,user_id,workshop_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`,
     );
-    for (const r of snapshot.registrations)
+    for (const r of changed("registrations"))
       await upReg.run(
         r.id,
         r.userId,
@@ -870,7 +881,7 @@ module.exports = function createStore({
     const upRating = db.prepare(
       `INSERT INTO ratings(id,registration_id,user_id,score,created_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET score=excluded.score`,
     );
-    for (const r of snapshot.ratings) {
+    for (const r of changed("ratings")) {
       const registrationId = r.registrationId || r.eventId;
       await upRating.run(
         r.id,
@@ -886,7 +897,12 @@ module.exports = function createStore({
     const upReply = db.prepare(
       `INSERT INTO complaint_replies(id,complaint_id,staff_id,message,created_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET message=excluded.message`,
     );
-    for (const c of snapshot.complaints) {
+    const oldReplies = new Map(
+      previous.complaints.flatMap((complaint) =>
+        (complaint.replies || []).map((reply) => [reply.id, reply]),
+      ),
+    );
+    for (const c of changed("complaints")) {
       await upComplaint.run(
         c.id,
         c.userId,
@@ -896,12 +912,19 @@ module.exports = function createStore({
         c.createdAt || now(),
       );
       for (const r of c.replies || [])
-        await upReply.run(r.id, c.id, r.staffId, r.text, r.createdAt || now());
+        if (!equalJson(oldReplies.get(r.id), r))
+          await upReply.run(
+            r.id,
+            c.id,
+            r.staffId,
+            r.text,
+            r.createdAt || now(),
+          );
     }
     const upNotice = db.prepare(
       `INSERT INTO notifications(id,user_id,title,message,related_type,related_id,read_at,created_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET read_at=excluded.read_at`,
     );
-    for (const n of snapshot.notifications)
+    for (const n of changed("notifications"))
       await upNotice.run(
         n.id,
         n.userId,
@@ -919,6 +942,7 @@ module.exports = function createStore({
     ensureSnapshot,
     viewFromSnapshot,
     inspectSnapshot,
+    loadWorkspace,
     syncUsersSnapshot,
     mergeSnapshot,
     writeSnapshot,

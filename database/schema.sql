@@ -17,6 +17,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email));
 
+-- Keep image bytes out of session/workspace profile queries and snapshots.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_version TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS user_avatars (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  image TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Requested readable storage for the replacement membership system.
 -- Nullable so existing accounts remain intact; public API profiles omit it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plaintext TEXT;

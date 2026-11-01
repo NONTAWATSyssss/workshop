@@ -117,11 +117,26 @@ function createStatic({ fs, path, PUBLIC, MIME }) {
       }
       const type =
         MIME[path.extname(file).toLowerCase()] || "application/octet-stream";
-      res.writeHead(200, {
+      const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
+      const headers = {
         "Content-Type": type,
         "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "no-store",
-      });
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        ETag: etag,
+        "Last-Modified": stat.mtime.toUTCString(),
+      };
+      const matches = String(req.headers["if-none-match"] || "")
+        .split(",")
+        .some(
+          (value) =>
+            value.trim() === "*" ||
+            value.trim().replace(/^W\//, "") === etag.replace(/^W\//, ""),
+        );
+      if (matches) {
+        res.writeHead(304, headers);
+        return res.end();
+      }
+      res.writeHead(200, { ...headers, "Content-Length": stat.size });
       if (req.method === "HEAD") return res.end();
       const stream = fs.createReadStream(file);
       stream.on("error", () => res.destroy());
