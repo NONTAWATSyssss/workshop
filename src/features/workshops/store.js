@@ -10,6 +10,7 @@ module.exports = function createStore({
   publicUser,
   now,
   validCover,
+  publicWorkshopCover,
 }) {
   async function workshopRows() {
     return await db
@@ -92,6 +93,9 @@ module.exports = function createStore({
           detail: c.detail,
           status: c.status,
           createdAt: c.created_at,
+          learnerTrashedAt: c.learner_trashed_at,
+          learnerDeletedAt: c.learner_deleted_at,
+          staffClearedAt: c.staff_cleared_at,
           replies: await Promise.all(
             (
               await db
@@ -186,12 +190,21 @@ module.exports = function createStore({
   }
 
   function viewFromSnapshot(snapshot, user) {
-    if (user.role === "staff") return snapshot;
+    const workshops = snapshot.workshops.map((workshop) => ({
+      ...workshop,
+      cover: publicWorkshopCover(workshop.id, workshop.cover),
+    }));
+    if (user.role === "staff")
+      return {
+        ...snapshot,
+        workshops,
+        complaints: snapshot.complaints.filter((item) => !item.staffClearedAt),
+      };
     const onlyMine = (items) => items.filter((item) => item.userId === user.id);
     return {
       ...snapshot,
       auditLog: [],
-      workshops: snapshot.workshops.map((workshop) => ({
+      workshops: workshops.map((workshop) => ({
         ...workshop,
         occupancy: snapshot.registrations.filter(
           (r) => r.workshopId === workshop.id && r.status !== "CANCELLED",
@@ -200,9 +213,50 @@ module.exports = function createStore({
       users: snapshot.users.filter((item) => item.id === user.id),
       registrations: onlyMine(snapshot.registrations),
       ratings: onlyMine(snapshot.ratings),
-      complaints: onlyMine(snapshot.complaints),
+      complaints: onlyMine(snapshot.complaints).filter(
+        (item) =>
+          !item.learnerDeletedAt &&
+          (!item.learnerTrashedAt ||
+            Date.parse(item.learnerTrashedAt) + 15 * 86400000 >
+              Date.parse(now())),
+      ),
       notifications: onlyMine(snapshot.notifications),
     };
+  }
+
+  async function inspectSnapshot() {
+    const row = await db
+      .prepare("SELECT revision,data_json FROM app_state WHERE id=1")
+      .get();
+    const snapshot = readJson(row.data_json);
+    const users = (
+      await db
+        .prepare(
+          "SELECT id,name,type,code,email,phone,faculty,major,status,role FROM users ORDER BY created_at",
+        )
+        .all()
+    ).map(publicUser);
+    return {
+      snapshot,
+      users,
+      usersChanged: !isDeepStrictEqual(snapshot.users, users),
+      revision: Number(row.revision),
+    };
+  }
+
+  // Caller holds the shared write lock so profile changes cannot race snapshot saves.
+  async function syncUsersSnapshot() {
+    const { snapshot, users, usersChanged, revision } = await inspectSnapshot();
+    if (usersChanged) {
+      snapshot.users = users;
+      snapshot.revision = revision + 1;
+      await db
+        .prepare(
+          "UPDATE app_state SET revision=?,data_json=?,updated_at=? WHERE id=1",
+        )
+        .run(snapshot.revision, JSON.stringify(snapshot), now());
+    }
+    return snapshot;
   }
   async function refreshSnapshot() {
     const row = await db
@@ -276,6 +330,44 @@ module.exports = function createStore({
     // Audit entries are generated from validated changes on the server.
     incoming.auditLog = current.auditLog || [];
     const oldAudit = Array.isArray(current.auditLog) ? current.auditLog : [];
+    // The browser keeps image URLs; restore original bytes only for an unchanged existing cover.
+    for (const workshop of incoming.workshops) {
+      const old = current.workshops.find((item) => item.id === workshop.id);
+      if (old && workshop.cover === publicWorkshopCover(old.id, old.cover))
+        workshop.cover = old.cover;
+    }
+    const hidden = current.complaints.filter((item) =>
+      user.role === "staff"
+        ? Boolean(item.staffClearedAt)
+        : item.userId === user.id &&
+          Boolean(
+            item.learnerDeletedAt ||
+            (item.learnerTrashedAt &&
+              Date.parse(item.learnerTrashedAt) + 15 * 86400000 <=
+                Date.parse(now())),
+          ),
+    );
+    if (
+      incoming.complaints.some((item) =>
+        hidden.some((row) => row.id === item.id),
+      )
+    )
+      throw Object.assign(new Error("คำร้องนี้ถูกลบจากบัญชีแล้ว"), {
+        status: 403,
+      });
+    for (const item of incoming.complaints) {
+      const old = current.complaints.find((row) => row.id === item.id);
+      if (
+        ["learnerTrashedAt", "learnerDeletedAt", "staffClearedAt"].some(
+          (field) => (item[field] ?? null) !== (old?.[field] ?? null),
+        )
+      )
+        throw Object.assign(
+          new Error("กรุณาลบหรือกู้คืนผ่านเมนูคำร้องเท่านั้น"),
+          { status: 403 },
+        );
+    }
+    incoming.complaints.push(...hidden);
     // Finalization is server-controlled and cannot be forged/removed through a whole-store save.
     const finalizedIds = new Set(
       current.workshops.filter((w) => w.attendanceFinalizedAt).map((w) => w.id),
@@ -653,13 +745,17 @@ module.exports = function createStore({
       }
       for (const n of incoming.notifications) {
         const old = current.notifications.find((x) => x.id === n.id);
-        if (
-          old &&
-          Object.entries(old).some(([k, v]) => k !== "readAt" && n[k] !== v)
-        )
+        if (old && Object.entries(old).some(([k, v]) => n[k] !== v))
           throw Object.assign(new Error("แก้ไขเนื้อหาการแจ้งเตือนไม่ได้"), {
             status: 403,
           });
+        if (!old && n.readAt != null)
+          throw Object.assign(
+            new Error("เวลาเปิดอ่านต้องบันทึกผ่านระบบแจ้งเตือน"),
+            {
+              status: 403,
+            },
+          );
       }
       const mergeMine = (oldRows, newRows) =>
         oldRows.filter((x) => x.userId !== user.id).concat(newRows);
@@ -822,6 +918,8 @@ module.exports = function createStore({
     workshopRows,
     ensureSnapshot,
     viewFromSnapshot,
+    inspectSnapshot,
+    syncUsersSnapshot,
     mergeSnapshot,
     writeSnapshot,
     refreshSnapshot,

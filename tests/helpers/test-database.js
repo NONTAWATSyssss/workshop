@@ -2,9 +2,12 @@
 const { PGlite } = require("@electric-sql/pglite");
 const { createPostgresDatabase } = require("../../src/database");
 
-module.exports = async function database() {
+module.exports = async function database(options = {}) {
   const engine = new PGlite();
   const query = async (sql, values = []) => {
+    options.onQuery?.(sql);
+    if (options.latencyMs)
+      await new Promise((resolve) => setTimeout(resolve, options.latencyMs));
     if (sql === "SELECT pg_advisory_xact_lock(724017001)") return { rows: [] };
     const result =
       !values.length && sql.includes(";")

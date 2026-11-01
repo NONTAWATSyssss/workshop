@@ -5,6 +5,9 @@ export function createManagementViews(context) {
     $,
     badge,
     esc,
+    dateRangeField,
+    workshopDateRangeField,
+    workshopTimeField,
     fmt,
     input,
     number,
@@ -370,7 +373,6 @@ export function createManagementViews(context) {
       state.dateFrom ||
       state.dateTo,
     );
-    const dateSelected = Boolean(state.dateFrom || state.dateTo);
     const dateLabel = (date) =>
       new Date(`${date}T00:00`).toLocaleDateString("th-TH", {
         day: "numeric",
@@ -411,7 +413,7 @@ export function createManagementViews(context) {
       ${title("WORKSHOP MANAGEMENT", "จัดการเวิร์กช็อป", "ค้นหา ติดตามสถานะ และจัดการกิจกรรมของคุณ", '<button class="btn primary" data-action="add-workshop"><i class="fa-solid fa-plus" aria-hidden="true"></i> เพิ่มเวิร์กช็อป</button>')}
       <nav class="manage-view-switch" aria-label="มุมมองรายการเวิร์กช็อป"><button type="button" data-action="manage-view" data-id="current" aria-pressed="${!viewingDeleted}">กิจกรรมปัจจุบัน</button><button type="button" data-action="manage-view" data-id="deleted" aria-pressed="${viewingDeleted}"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> ประวัติการลบ</button></nav>
       <section class="manage-filters" aria-label="ค้นหาและกรองเวิร์กช็อป"><div class="manage-filter-row"><div class="manage-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="search" type="search" aria-label="ค้นหาเวิร์กช็อป" placeholder="${viewingDeleted ? "ค้นหาชื่อกิจกรรม รหัส หรือผู้ลบ" : "ค้นหาชื่อเวิร์กช็อปหรือสถานที่"}" value="${esc(state.search)}"></div>${viewingDeleted ? "" : `<select id="phase-filter" aria-label="สถานะกิจกรรม"><option value="all" ${state.filter === "all" ? "selected" : ""}>ทุกสถานะ</option>${managementStatuses.map(([value, label]) => `<option value="${value}" ${state.filter === value ? "selected" : ""}>${label}</option>`).join("")}</select>`}
-      <div id="manage-date-panel" class="manage-date-panel"><label for="date-from">${viewingDeleted ? "ลบตั้งแต่" : "ตั้งแต่"} <input id="date-from" type="date" aria-label="${viewingDeleted ? "วันที่ลบตั้งแต่" : "วันเริ่มตั้งแต่"}" value="${esc(state.dateFrom || "")}"></label><label for="date-to">ถึง <input id="date-to" type="date" aria-label="ถึงวันที่" value="${esc(state.dateTo || "")}"></label>${dateSelected ? '<button class="btn small" data-action="clear-manage-dates">ล้างวันที่</button>' : ""}</div></div></section>
+      <div id="manage-date-panel" class="manage-date-panel" role="group" aria-label="${viewingDeleted ? "กรองตามวันที่ลบ" : "กรองตามวันเริ่มกิจกรรม"}">${dateRangeField()}</div></div></section>
       <section class="manage-results" id="manage-results" tabindex="-1" aria-label="ผลการค้นหาเวิร์กช็อป"><div class="manage-results-heading"><div><h2>${viewingDeleted ? "กิจกรรมที่ลบไปแล้ว" : state.filter === "all" ? "รายการเวิร์กช็อป" : `<span class="manage-status manage-status-${esc(state.filter)}">${managementStatusLabel(state.filter)}</span>`}<span class="manage-result-count">${number(filtered.length)} รายการ</span></h2><p class="manage-result-context">${esc(context)}</p></div><div class="manage-results-tools">${hasFilters ? '<button class="manage-reset" data-action="reset-manage-filters">ล้างตัวกรอง</button>' : ""}<label class="manage-sort-label">เรียงตาม <select id="manage-sort" aria-label="เรียงลำดับเวิร์กช็อป">${sortOptions
         .map(
           ([value, label]) =>
@@ -432,19 +434,38 @@ export function createManagementViews(context) {
     state.workshopMenuTrigger = null;
   }
 
+  function mountActionMenu(button, content, label) {
+    const menu = document.createElement("div");
+    menu.id = "workshop-actions-menu";
+    menu.className = "workshop-actions-menu";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", label);
+    menu.innerHTML = content;
+    document.body.appendChild(menu);
+    const rect = button.getBoundingClientRect?.() || {
+      right: 230,
+      bottom: 100,
+      top: 56,
+    };
+    const height =
+      menu.getBoundingClientRect?.().height ||
+      menu.querySelectorAll("button").length * 44 + 16;
+    menu.style.left = `${Math.max(12, Math.min(rect.right - 224, (window.innerWidth || 1024) - 236))}px`;
+    menu.style.top = `${Math.max(12, rect.bottom + height + 8 > (window.innerHeight || 768) ? rect.top - height - 8 : rect.bottom + 8)}px`;
+    state.workshopMenuTrigger = button;
+    button.setAttribute("aria-expanded", "true");
+    menu.querySelector("button:not([disabled])")?.focus();
+    return menu;
+  }
+
   function openWorkshopMenu(button) {
     if (state.workshopMenuTrigger === button) return closeWorkshopMenu(true);
     closeWorkshopMenu();
     const w = store.workshops.find((item) => item.id === button.dataset.id);
     if (!w || !staff()) return;
-    const menu = document.createElement("div");
-    menu.id = "workshop-actions-menu";
-    menu.className = "workshop-actions-menu";
-    menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", `จัดการ ${w.title}`);
     const item = (action, icon, label, danger = false) =>
       `<button type="button" role="menuitem" class="${danger ? "is-danger" : ""}" data-action="${action}" data-id="${esc(w.id)}"><i class="fa-solid ${icon}" aria-hidden="true"></i>${label}</button>`;
-    menu.innerHTML =
+    const content =
       (w.attendanceFinalizedAt
         ? ""
         : item("edit-workshop", "fa-pen", "แก้ไขเวิร์กช็อป")) +
@@ -452,18 +473,35 @@ export function createManagementViews(context) {
         ? item("close-workshop", "fa-pause", "ปิดรับสมัคร")
         : "") +
       item("delete-workshop", "fa-trash-can", "ลบเวิร์กช็อป", true);
-    document.body.appendChild(menu);
-    const rect = button.getBoundingClientRect?.() || {
-      right: 230,
-      bottom: 100,
-      top: 56,
-    };
-    const height = menu.querySelectorAll("button").length * 44 + 16;
-    menu.style.left = `${Math.max(12, Math.min(rect.right - 224, (window.innerWidth || 1024) - 236))}px`;
-    menu.style.top = `${Math.max(12, rect.bottom + height + 8 > (window.innerHeight || 768) ? rect.top - height - 8 : rect.bottom + 8)}px`;
-    state.workshopMenuTrigger = button;
-    button.setAttribute("aria-expanded", "true");
-    menu.querySelector("button")?.focus();
+    mountActionMenu(button, content, `จัดการ ${w.title}`);
+  }
+
+  function openAttendanceMenu(button) {
+    if (state.workshopMenuTrigger === button) return closeWorkshopMenu(true);
+    closeWorkshopMenu();
+    const r = store.registrations.find((item) => item.id === button.dataset.id);
+    const w = r && store.workshops.find((item) => item.id === r.workshopId);
+    if (
+      !staff() ||
+      !r ||
+      !w ||
+      r.status === "CANCELLED" ||
+      w.attendanceFinalizedAt ||
+      context.apiSaveCount
+    )
+      return;
+    const name =
+      store.users.find((item) => item.id === r.userId)?.name || "ผู้เข้าร่วม";
+    const content = [
+      ["attend", "ATTENDED", "circle-check", "เข้าร่วมงาน"],
+      ["absent", "ABSENT", "circle-xmark", "ไม่เข้าร่วม"],
+    ]
+      .map(
+        ([action, status, symbol, label]) =>
+          `<button type="button" role="menuitemradio" aria-checked="${r.status === status}" class="attendance-menu-item ${status === "ABSENT" ? "is-absent" : ""}" data-action="${action}" data-id="${esc(r.id)}" ${r.status === status ? "disabled" : ""}><i class="fa-regular fa-${symbol}" aria-hidden="true"></i><span>${label}</span>${r.status === status ? '<i class="fa-solid fa-check attendance-current" aria-hidden="true"></i>' : ""}</button>`,
+      )
+      .join("");
+    mountActionMenu(button, content, `บันทึกผลการเข้าร่วม ${name}`);
   }
 
   function participantsV2() {
@@ -486,10 +524,17 @@ export function createManagementViews(context) {
     });
     return `${title("PARTICIPANT LIST", "รายชื่อผู้เข้าร่วมอบรม", "ค้นหา กรอง และบันทึกผลการเข้าร่วมจากรายการจริง")}${attendancePanel(selectedWorkshop)}<div class="staff-work-toolbar staff-filter-grid participants-filter-grid"><input id="participant-search" type="search" aria-label="ค้นหาผู้เข้าร่วม" placeholder="ค้นหาชื่อหรือรหัสนักศึกษา" value="${esc(state.participantQuery)}"><select id="participant-filter" aria-label="เลือกเวิร์กช็อป"><option value="all">ทุกเวิร์กช็อป</option>${store.workshops.map((w) => `<option value="${w.id}" ${state.participantWorkshop === w.id ? "selected" : ""}>${esc(w.title)} · ${esc(fmt(w.start))}${w.attendanceFinalizedAt ? " · ยืนยันผลแล้ว" : ""}</option>`).join("")}</select><select id="participant-status" aria-label="กรองสถานะ"><option value="all" ${state.participantStatus === "all" ? "selected" : ""}>ทุกสถานะ</option><option value="PENDING" ${state.participantStatus === "PENDING" ? "selected" : ""}>รอบันทึกผล</option><option value="ATTENDED" ${state.participantStatus === "ATTENDED" ? "selected" : ""}>เข้าร่วมแล้ว</option><option value="ABSENT" ${state.participantStatus === "ABSENT" ? "selected" : ""}>ไม่เข้าร่วม</option><option value="CANCELLED" ${state.participantStatus === "CANCELLED" ? "selected" : ""}>ยกเลิก</option></select><button class="btn small staff-filter-export" data-action="export-participants"><i class="fa-solid fa-download" aria-hidden="true"></i> Export CSV</button></div>${
       list.length
-        ? `<div class="panel tablewrap"><table><thead><tr><th>ลำดับ</th><th>ชื่อ-นามสกุล</th><th>รหัสประจำตัว</th><th>สถานะ</th><th>เช็กชื่อ</th></tr></thead><tbody>${list
+        ? `<div class="panel tablewrap participants-table-wrap"><table class="participants-table"><caption class="sr-only">รายชื่อผู้เข้าร่วม กดป้ายสถานะเพื่อเลือกผลการเข้าร่วม</caption><thead><tr><th>ลำดับ</th><th>ชื่อ-นามสกุล</th><th>รหัสประจำตัว</th><th>สถานะ <span class="participant-status-hint">กดเพื่อบันทึกผล</span></th></tr></thead><tbody>${list
             .map((r, i) => {
               const u = store.users.find((x) => x.id === r.userId);
-              return `<tr><td>${i + 1}</td><td><b>${esc(u?.name || "ไม่พบข้อมูล")}</b></td><td>${esc(u?.code || "—")}</td><td>${badge(r.status)}</td><td>${store.workshops.find((w) => w.id === r.workshopId)?.attendanceFinalizedAt ? '<span class="muted">ยืนยันผลแล้ว</span>' : r.status !== "CANCELLED" ? `<button class="btn small primary" data-action="attend" data-id="${r.id}">เข้าร่วมงาน</button><button class="btn small danger" data-action="absent" data-id="${r.id}">ไม่เข้าร่วม</button>` : "ผู้ใช้ยกเลิกแล้ว"}</td></tr>`;
+              const finalized = store.workshops.find(
+                (w) => w.id === r.workshopId,
+              )?.attendanceFinalizedAt;
+              const status =
+                finalized || r.status === "CANCELLED"
+                  ? `${badge(r.status)}${finalized ? '<span class="participant-locked"><i class="fa-solid fa-lock" aria-hidden="true"></i> ยืนยันผลแล้ว</span>' : ""}`
+                  : `<button type="button" class="participant-status-trigger" data-action="attendance-menu" data-id="${esc(r.id)}" aria-label="บันทึกผลการเข้าร่วม ${esc(u?.name || "ผู้เข้าร่วม")}" aria-haspopup="menu" aria-expanded="false" aria-controls="workshop-actions-menu" ${context.apiSaveCount ? "disabled" : ""}>${badge(r.status)}<i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>`;
+              return `<tr><td>${i + 1}</td><td><b>${esc(u?.name || "ไม่พบข้อมูล")}</b></td><td>${esc(u?.code || "—")}</td><td>${status}</td></tr>`;
             })
             .join("")}</tbody></table></div>`
         : empty("ยังไม่มีรายชื่อที่ตรงกับตัวกรอง")
@@ -736,7 +781,30 @@ export function createManagementViews(context) {
     const w = store.workshops.find((w) => w.id === id);
     openModal(
       w ? "แก้ไขเวิร์กช็อป" : "เพิ่มเวิร์กช็อปใหม่",
-      `<form id="workshop-form" data-id="${w?.id || ""}">${input("ชื่อกิจกรรม", "title", "text", `maxlength="180" value="${esc(w?.title || "")}"`)}<div class="grid two">${input("วันและเวลาเริ่ม", "start", "datetime-local", `value="${w?.start || ""}"`)}${input("วันและเวลาสิ้นสุด", "end", "datetime-local", `value="${w?.end || ""}"`)}</div>${input("สถานที่ / ห้องจัดเวิร์กช็อป", "place", "text", `maxlength="180" value="${esc(w?.place || "")}"`)}${input("จำนวนที่นั่ง", "capacity", "number", `min="1" max="10000" step="1" value="${w?.capacity || 30}"`)}${input("จำนวนชั่วโมงอบรม (หักเวลาพักแล้ว)", "hours", "number", `min="0.5" max="1000" step="0.5" value="${w?.hours || 3}"`)}<div class="field"><label for="cover">รูปภาพปก (JPG / PNG / WebP ไม่เกิน 3 MB)</label><input type="file" name="cover" id="cover" accept="image/jpeg,image/png,image/webp"></div><div class="field"><label for="description">คำอธิบายกิจกรรม</label><textarea name="description" id="description" maxlength="1000">${esc(w?.description || "")}</textarea></div><div class="error" id="form-error" role="alert"></div><button class="btn primary">บันทึกเวิร์กช็อป</button></form>`,
+      `<form id="workshop-form" class="workshop-editor" data-id="${esc(w?.id || "")}">
+        ${input("ชื่อกิจกรรม", "title", "text", `maxlength="180" value="${esc(w?.title || "")}"`)}
+        ${input("สถานที่ / ห้องจัดเวิร์กช็อป", "place", "text", `maxlength="180" value="${esc(w?.place || "")}"`)}
+        <div class="workshop-numbers-row">
+          ${input("จำนวนที่นั่ง", "capacity", "number", `min="1" max="10000" step="1" value="${w?.capacity || 30}"`)}
+          ${input("จำนวนชั่วโมงอบรม (หักเวลาพักแล้ว)", "hours", "number", `min="0.5" max="1000" step="0.5" value="${w?.hours || 3}"`)}
+        </div>
+        <div class="workshop-media-row">
+          <div class="workshop-schedule">
+            <div class="field"><label for="editor-date-range-trigger">ช่วงวันที่อบรม</label><div class="workshop-range-field">${workshopDateRangeField([w?.start?.slice(0, 10) || "", w?.end?.slice(0, 10) || ""])}</div></div>
+            <div class="workshop-time-fields">${workshopTimeField("startTime", "เวลาเริ่ม", w?.start?.slice(11, 16) || "09:00")}${workshopTimeField("endTime", "เวลาสิ้นสุด", w?.end?.slice(11, 16) || "12:00")}</div>
+            <input type="hidden" name="startDate" value="${esc(w?.start?.slice(0, 10) || "")}"><input type="hidden" name="endDate" value="${esc(w?.end?.slice(0, 10) || "")}">
+            <input type="hidden" name="start" value="${esc(w?.start || "")}"><input type="hidden" name="end" value="${esc(w?.end || "")}">
+          </div>
+          <div class="field workshop-cover-field"><label for="cover">รูปภาพปก</label><div class="workshop-upload${w?.cover ? " has-preview" : ""}">
+            <label class="workshop-cover-image" for="cover"><img class="workshop-cover-preview" alt="ตัวอย่างรูปภาพปก" ${w?.cover ? `src="${esc(w.cover)}"` : "hidden"}></label>
+            <label class="workshop-upload-placeholder" for="cover"><i class="fa-regular fa-image" aria-hidden="true"></i><span class="workshop-upload-name">เพิ่มรูปภาพ</span><small>JPG / PNG / WebP<br>ไม่เกิน 3 MB</small></label>
+            <div class="workshop-cover-actions"><button type="button" class="workshop-cover-change" data-action="change-workshop-cover" aria-label="เปลี่ยนรูปภาพปก"><i class="fa-solid fa-camera" aria-hidden="true"></i><span>เปลี่ยนรูป</span></button><button type="button" class="workshop-cover-remove" data-action="remove-workshop-cover" aria-label="ลบรูปภาพปก"><i class="fa-regular fa-trash-can" aria-hidden="true"></i><span>ลบรูป</span></button></div>
+            <input type="hidden" name="removeCover" value="0"><input type="file" name="cover" id="cover" class="sr-only" accept="image/jpeg,image/png,image/webp">
+          </div></div>
+        </div>
+        <div class="field"><label for="description">คำอธิบายกิจกรรม</label><textarea name="description" id="description" maxlength="1000">${esc(w?.description || "")}</textarea></div>
+        <div class="error" id="form-error" role="alert"></div><button class="btn primary" type="submit">บันทึกเวิร์กช็อป</button>
+      </form>`,
     );
   }
   function approvalsV2() {
@@ -769,6 +837,7 @@ export function createManagementViews(context) {
     downloadCsv,
     managedWorkshops,
     openWorkshopMenu,
+    openAttendanceMenu,
     participantsV2,
     staffDashboard,
     workshopArchive,

@@ -25,6 +25,7 @@ module.exports = async function createApplication(options = {}) {
   }
   const membership = createMembership(context, options);
   context.requireAccess = membership.requireAccess;
+  Object.assign(context, require("./features/workshops/complaints")(context));
   const { routeApi } = require("./features/workshops/management")(context);
   const { json } = context;
   const { serveStatic } = createStatic({ ...config, fs, path });
@@ -55,6 +56,42 @@ module.exports = async function createApplication(options = {}) {
         url.pathname === "/api/workshops"
       )
         return json(res, 200, { workshops: await catalog.list() });
+      const coverMatch = /^\/api\/workshops\/([^/]+)\/cover$/.exec(
+        url.pathname,
+      );
+      if (["GET", "HEAD"].includes(req.method) && coverMatch) {
+        let id;
+        try {
+          id = decodeURIComponent(coverMatch[1]);
+        } catch {
+          return json(res, 400, { error: "URL ไม่ถูกต้อง" });
+        }
+        const cover = await catalog.cover(id);
+        const image =
+          /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(
+            cover || "",
+          );
+        if (!image || !utils.validCover(cover))
+          return json(res, 404, { error: "ไม่พบรูปภาพกิจกรรม" });
+        const version = crypto.createHash("md5").update(cover).digest("hex");
+        const etag = `"${version}"`;
+        const headers = {
+          "Content-Type": `image/${image[1]}`,
+          "X-Content-Type-Options": "nosniff",
+          ETag: etag,
+          "Cache-Control":
+            url.searchParams.get("v") === version
+              ? "public, max-age=31536000, immutable"
+              : "public, max-age=0, must-revalidate",
+        };
+        if (req.headers["if-none-match"] === etag) {
+          res.writeHead(304, headers);
+          return res.end();
+        }
+        const buffer = Buffer.from(image[2], "base64");
+        res.writeHead(200, { ...headers, "Content-Length": buffer.length });
+        return res.end(req.method === "HEAD" ? undefined : buffer);
+      }
       const match = /^\/api\/workshops\/([^/]+)$/.exec(url.pathname);
       if (
         match &&
@@ -72,8 +109,15 @@ module.exports = async function createApplication(options = {}) {
           ? json(res, 200, { workshop })
           : json(res, 404, { error: "ไม่พบกิจกรรม" });
       }
+      if (
+        req.method === "GET" &&
+        url.pathname === "/api/session" &&
+        !context.parseCookies(req.headers.cookie).bsru_session
+      )
+        return await membership.route(req, res, url);
       await db.withRequest(async () => {
         if (await membership.route(req, res, url)) return;
+        if (await context.routeComplaints(req, res, url)) return;
         return routeApi(req, res, url);
       });
     } catch (error) {

@@ -6,6 +6,7 @@
 ปุ่ม Login ด้านบนเปิด Modal ที่เข้าสู่ระบบ สมัครสมาชิก และกู้รหัสผ่านได้
 เมื่อเข้าสู่ระบบแสดงพื้นที่ผู้เรียนหรือเจ้าหน้าที่ตามสิทธิ์เดิม
 ประกาศใส่เนื้อหาในหน้าเว็บก่อน ยังไม่มีหน้าจัดการประกาศ
+หน้าแรกสาธารณะใช้กรอบความกว้างเดียวกับ Navbar มีประกาศตัวอย่างพร้อมภาพใน `activities.js` และแถบเลื่อนกิจกรรมจริงที่ยังเปิดรับ เรียงตามเวลาที่เพิ่มกิจกรรม ไม่มีหน้ากิจกรรมแยกสำหรับผู้ที่ยังไม่ล็อกอิน ส่วนหน้าค้นหากิจกรรมของสมาชิกยังคงอยู่
 ใช้ Vercel และ Supabase PostgreSQL และเก็บรหัสผ่านจริงในตารางตามคำขอเดิม
 
 ## โครงสร้าง
@@ -19,16 +20,16 @@ src/core/http.js              HTTP, cookie, static files และ origin
 src/core/utils.js             เวลา ข้อมูล public profile และ password hashing
 src/database/                 PostgreSQL adapter และ connection pool
 src/features/membership/      สมัคร ล็อกอิน บัญชี SMTP และ OTP recovery
-src/features/workshops/       catalog, API จัดการ และ store
+src/features/workshops/       catalog, API จัดการ, store และวงจรถังขยะคำร้อง
 public/assets/js/app.js       ประกอบหน้าเว็บและจัดการ session/navigation
-public/assets/js/views/       activities, management และ membership
-public/assets/css/            base, components และ management
+public/assets/js/views/       activities, records, management, membership และตัวเลือกวัน/เวลา
+public/assets/css/            base, components, management และ records
 database/schema.sql           schema และการเพิ่มคอลัมน์/ตารางอย่างเข้ากันได้
 tests/                        การทดสอบพฤติกรรม
 docs/                         คู่มือปัจจุบัน
 ```
 
-`src` มี 11 ไฟล์ โดยหน้า root ของ `src` มีเพียง app และ config
+หน้า root ของ `src` มีเพียง app และ config
 แยกสมาชิกเป็นสองไฟล์ เพราะขั้นตอนกู้รหัสผ่านมี transaction และการจำกัดการลองที่ควรดูแลแยกจาก login/signup
 รวม SMTP, session, signup และ account routes ไว้ใน membership/index.js
 หน้าเว็บใช้ factory รับ context จาก app โดยไม่มี circular imports

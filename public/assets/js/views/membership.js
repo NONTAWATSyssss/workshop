@@ -4,23 +4,73 @@ export function createMembershipViews(context) {
   let resetAvailable = false;
   let challenge = null;
   let grant = null;
+  let loginSlide = 0;
+  const loginPromotions = [
+    {
+      image: "/assets/images/image-002.jpg",
+      alt: "กลุ่มผู้เรียนแลกเปลี่ยนความรู้ร่วมกัน",
+      title: "เรียนรู้กับคนที่มีเป้าหมายเดียวกัน",
+      text: "พบเพื่อนใหม่ แลกเปลี่ยนมุมมอง และเติบโตผ่านการเรียนรู้ร่วมกัน",
+    },
+    {
+      image: "/assets/images/image-003.jpg",
+      alt: "หน้าจอคอมพิวเตอร์สำหรับฝึกทักษะพัฒนาเว็บไซต์",
+      title: "สร้างทักษะใหม่ จากการลงมือทำ",
+      text: "ค้นหาเวิร์กช็อปที่สนใจ แล้วเปลี่ยนความรู้ให้เป็นประสบการณ์ของคุณ",
+    },
+    {
+      image: "/assets/images/image-005.jpg",
+      alt: "โต๊ะทำงานสร้างสรรค์พร้อมคอมพิวเตอร์ออกแบบสื่อ",
+      title: "ต่อยอดทุกไอเดีย ให้เป็นผลงาน",
+      text: "เริ่มต้นสิ่งใหม่ เก็บเกี่ยวประสบการณ์ และติดตามชั่วโมงอบรมได้ในที่เดียว",
+    },
+  ];
   const policy =
     "อย่างน้อย 12 ตัว มีตัวพิมพ์ใหญ่ ตัวพิมพ์เล็ก ตัวเลข และสัญลักษณ์ โดยไม่มีช่องว่าง";
   const passwordField = (label, name, confirmation = false) =>
-    `<div class="field"><label for="${name}">${label}</label><div class="auth-password"><input id="${name}" name="${name}" type="password" autocomplete="${confirmation ? "new-password" : "current-password"}" maxlength="128" required><button class="auth-password-toggle" type="button" data-action="auth-toggle-password" data-id="${name}" aria-label="แสดงรหัสผ่าน" aria-pressed="false">แสดง</button></div></div>`;
+    `<div class="field"><label for="${name}">${label}</label><div class="auth-password"><input id="${name}" name="${name}" type="password" autocomplete="${confirmation ? "new-password" : "current-password"}" maxlength="128" required><button class="auth-password-toggle" type="button" data-action="auth-toggle-password" data-id="${name}" aria-label="แสดงรหัสผ่าน" title="แสดงรหัสผ่าน" aria-controls="${name}" aria-pressed="false"><i class="fa-regular fa-eye" aria-hidden="true"></i></button></div></div>`;
 
   function loginModal(email = "", message = "") {
+    loginSlide = 0;
+    const promotion = `<aside class="login-promo" aria-label="ภาพประชาสัมพันธ์ BSRU Workshop" aria-roledescription="carousel"><span class="login-promo-brand"><i class="fa-solid fa-graduation-cap" aria-hidden="true"></i> BSRU Workshop</span><div class="login-promo-slides">${loginPromotions.map((slide, index) => `<figure class="login-promo-slide" data-slide="${index}" role="group" aria-roledescription="ภาพประชาสัมพันธ์" aria-label="${index + 1} จาก 3" ${index ? "hidden" : ""}><img src="${slide.image}" alt="${slide.alt}" width="900" height="1100"><figcaption><span>พื้นที่การเรียนรู้ของคุณ</span><h3>${slide.title}</h3><p>${slide.text}</p></figcaption></figure>`).join("")}</div><div class="login-promo-controls"><button type="button" data-action="auth-promo" data-id="prev" aria-label="ภาพประชาสัมพันธ์ก่อนหน้า"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i></button><div class="login-promo-dots" role="group" aria-label="เลือกภาพประชาสัมพันธ์">${loginPromotions.map((slide, index) => `<button type="button" data-action="auth-promo" data-id="${index}" aria-label="แสดงภาพ ${index + 1}: ${slide.title}" aria-pressed="${index === 0}"><span aria-hidden="true"></span></button>`).join("")}</div><span class="login-promo-count" aria-hidden="true">01 / 03</span><button type="button" data-action="auth-promo" data-id="next" aria-label="ภาพประชาสัมพันธ์ถัดไป"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div><span id="login-promo-status" class="sr-only" role="status" aria-live="polite">ภาพ 1 จาก 3: ${loginPromotions[0].title}</span></aside>`;
     openModal(
       "เข้าสู่ระบบ",
-      `<div class="auth-intro"><p>ยินดีต้อนรับกลับสู่ BSRU Workshop</p><span>เข้าสู่ระบบเพื่อสมัครกิจกรรมและติดตามการอบรมของคุณ</span></div>${message ? `<p class="notice" role="status">${esc(message)}</p>` : ""}<form id="login-form" class="auth-form">${input("อีเมล หรือเบอร์โทรศัพท์", "identity", "text", `autocomplete="username" maxlength="150" value="${esc(email)}"`)}${passwordField("รหัสผ่าน", "password")}<div class="error" role="alert"></div><button class="btn primary auth-submit" type="submit">เข้าสู่ระบบ</button></form><div class="auth-links"><button type="button" data-action="forgot">ลืมรหัสผ่าน</button><span>ยังไม่มีบัญชี? <button type="button" data-action="register">สมัครสมาชิก</button></span></div>`,
+      `<div class="login-layout">${promotion}<section class="login-form-panel" aria-label="แบบฟอร์มเข้าสู่ระบบ"><div class="auth-intro"><p>ยินดีต้อนรับกลับสู่ BSRU Workshop</p><span>เข้าสู่ระบบเพื่อสมัครกิจกรรมและติดตามการอบรมของคุณ</span></div>${message ? `<p class="notice" role="status">${esc(message)}</p>` : ""}<form id="login-form" class="auth-form">${input("อีเมล หรือเบอร์โทรศัพท์", "identity", "text", `autocomplete="username" maxlength="150" value="${esc(email)}"`)}${passwordField("รหัสผ่าน", "password")}<div class="error" role="alert"></div><button class="btn primary auth-submit" type="submit">เข้าสู่ระบบ</button></form><div class="auth-links"><button type="button" data-action="forgot">ลืมรหัสผ่าน</button><span>ยังไม่มีบัญชี? <button type="button" data-action="register">สมัครสมาชิก</button></span></div></section></div>`,
     );
-    $('#login-form [name="identity"]')?.focus();
+    $('#login-form [name="identity"]')?.focus({ preventScroll: true });
+  }
+
+  function changeLoginPromotion(direction) {
+    const root = $(".login-promo");
+    if (!root) return;
+    const next =
+      direction === "prev"
+        ? loginSlide - 1
+        : direction === "next"
+          ? loginSlide + 1
+          : Number(direction);
+    if (!Number.isInteger(next)) return;
+    loginSlide =
+      ((next % loginPromotions.length) + loginPromotions.length) %
+      loginPromotions.length;
+    root.querySelectorAll(".login-promo-slide").forEach((slide, index) => {
+      slide.hidden = index !== loginSlide;
+    });
+    root
+      .querySelectorAll(".login-promo-dots button")
+      .forEach((button, index) =>
+        button.setAttribute("aria-pressed", String(index === loginSlide)),
+      );
+    root.querySelector(".login-promo-count").textContent =
+      `${String(loginSlide + 1).padStart(2, "0")} / 03`;
+    $("#login-promo-status").textContent =
+      `ภาพ ${loginSlide + 1} จาก 3: ${loginPromotions[loginSlide].title}`;
   }
 
   function registerModal() {
     openModal(
       "สมัครสมาชิก",
-      `<div class="auth-intro"><p>เริ่มต้นเรียนรู้ไปด้วยกัน</p><span>กรอกข้อมูลจริงและอีเมลที่คุณใช้งาน</span></div><form id="register-form" class="auth-form">${input("ชื่อ-นามสกุล", "name", "text", 'autocomplete="name" maxlength="120"')}<div class="grid two"><div class="field"><label for="type">ประเภทผู้ใช้งาน</label><select id="type" name="type" required><option value="นักศึกษา" selected>นักศึกษา</option><option value="อาจารย์">อาจารย์</option><option value="เจ้าหน้าที่">เจ้าหน้าที่</option></select></div>${input("รหัสประจำตัว", "code", "text", 'maxlength="30"')}</div>${input("อีเมล", "email", "email", 'autocomplete="email" maxlength="150" placeholder="name@example.com"')}${input("เบอร์โทรศัพท์", "phone", "tel", 'autocomplete="tel" inputmode="tel" maxlength="10"')}${passwordField("ตั้งรหัสผ่าน", "password", true)}${passwordField("ยืนยันรหัสผ่าน", "confirmation", true)}<p class="sub auth-policy">${policy}</p><div class="error" role="alert"></div><button class="btn primary auth-submit" type="submit">สมัครสมาชิก</button></form><p class="auth-return">มีบัญชีแล้ว? <button type="button" data-action="login">เข้าสู่ระบบ</button></p>`,
+      `<div class="auth-intro"><p>เริ่มต้นเรียนรู้ไปด้วยกัน</p><span>กรอกข้อมูลจริงและอีเมลที่คุณใช้งาน</span></div><form id="register-form" class="auth-form">${input("ชื่อ-นามสกุล", "name", "text", 'autocomplete="name" maxlength="120"')}<div class="grid two"><div class="field"><label for="type">ประเภทผู้ใช้งาน</label><select id="type" name="type" required><option value="นักศึกษา" selected>นักศึกษา</option><option value="อาจารย์">อาจารย์</option><option value="เจ้าหน้าที่">เจ้าหน้าที่</option></select></div>${input("รหัสประจำตัว", "code", "text", 'maxlength="30"')}</div>${input("อีเมล", "email", "email", 'autocomplete="email" maxlength="150" placeholder="name@example.com"')}${input("เบอร์โทรศัพท์", "phone", "tel", 'autocomplete="tel" inputmode="tel" maxlength="10"')}<div class="grid two">${passwordField("ตั้งรหัสผ่าน", "password", true)}${passwordField("ยืนยันรหัสผ่าน", "confirmation", true)}</div><p class="sub auth-policy">${policy}</p><div class="error" role="alert"></div><button class="btn primary auth-submit" type="submit">สมัครสมาชิก</button></form><p class="auth-return">มีบัญชีแล้ว? <button type="button" data-action="login">เข้าสู่ระบบ</button></p>`,
     );
     $('#register-form [name="name"]')?.focus();
   }
@@ -99,6 +149,10 @@ export function createMembershipViews(context) {
   }
 
   async function handleAction(action, button) {
+    if (action === "auth-promo") {
+      changeLoginPromotion(button.dataset.id);
+      return true;
+    }
     if (action === "login") {
       loginModal();
       return true;
@@ -117,7 +171,8 @@ export function createMembershipViews(context) {
       if (field) {
         const show = field.type === "password";
         field.type = show ? "text" : "password";
-        button.textContent = show ? "ซ่อน" : "แสดง";
+        button.innerHTML = `<i class="fa-regular ${show ? "fa-eye-slash" : "fa-eye"}" aria-hidden="true"></i>`;
+        button.title = show ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน";
         button.setAttribute("aria-pressed", String(show));
         button.setAttribute(
           "aria-label",
@@ -253,6 +308,17 @@ export function createMembershipViews(context) {
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".account-menu")) closeAccountMenu();
   });
+  document.addEventListener("keydown", (event) => {
+    if (
+      !event.target.closest?.(".login-promo") ||
+      !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    changeLoginPromotion(
+      { ArrowLeft: "prev", ArrowRight: "next", Home: "0", End: "2" }[event.key],
+    );
+  });
   const actions = new Set([
     "login",
     "register",
@@ -260,6 +326,7 @@ export function createMembershipViews(context) {
     "change-password",
     "account-password",
     "auth-toggle-password",
+    "auth-promo",
     "toggle-account-menu",
     "account-profile",
     "account-settings",

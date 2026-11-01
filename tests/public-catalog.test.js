@@ -7,6 +7,11 @@ const database = require("./helpers/test-database");
 
 test("public catalog exposes activities while private APIs require valid membership", async (t) => {
   const db = await database("postgres");
+  const cover =
+    "data:image/png;base64," +
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]).toString(
+      "base64",
+    );
   await db
     .prepare(
       "INSERT INTO users(id,name,type,code,email,phone,faculty,major,status,role) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -38,7 +43,7 @@ test("public catalog exposes activities while private APIs require valid members
       "public-one",
       "กิจกรรมทดสอบ",
       "รายละเอียดกิจกรรม",
-      "",
+      cover,
       "2099-11-01T09:00:00+07:00",
       "2099-11-01T12:00:00+07:00",
       "ห้องเรียน",
@@ -67,6 +72,38 @@ test("public catalog exposes activities while private APIs require valid members
   assert.equal(workshops[0].description, "รายละเอียดกิจกรรม");
   assert.equal(workshops[0].start, "2099-11-01T09:00");
   assert.equal(workshops[0].occupancy, 0);
+  assert.ok(Number.isFinite(Date.parse(workshops[0].createdAt)));
+  assert.match(
+    workshops[0].cover,
+    /^\/api\/workshops\/public-one\/cover\?v=[a-f0-9]{32}$/,
+  );
+  assert.ok(!JSON.stringify(workshops).includes("data:image"));
+  const image = await fetch(base + workshops[0].cover);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get("content-type"), "image/png");
+  assert.match(image.headers.get("cache-control"), /immutable/);
+  assert.deepEqual(
+    Buffer.from(await image.arrayBuffer()),
+    Buffer.from(cover.split(",")[1], "base64"),
+  );
+  const cached = await fetch(base + workshops[0].cover, {
+    headers: { "If-None-Match": image.headers.get("etag") },
+  });
+  assert.equal(cached.status, 304);
+  const imageHead = await fetch(base + workshops[0].cover, { method: "HEAD" });
+  assert.equal(imageHead.status, 200);
+  assert.equal(await imageHead.text(), "");
+  assert.equal(Number(imageHead.headers.get("content-length")), 12);
+  const staleImage = await fetch(
+    base + "/api/workshops/public-one/cover?v=old",
+  );
+  assert.equal(staleImage.status, 200);
+  assert.doesNotMatch(staleImage.headers.get("cache-control"), /immutable/);
+  await staleImage.arrayBuffer();
+  assert.equal(
+    (await fetch(base + "/api/workshops/missing/cover")).status,
+    404,
+  );
   assert.doesNotMatch(
     JSON.stringify(workshops),
     /Private member|PRIVATE-CODE|private.user|PRIVATE_CREDENTIAL_HASH|PRIVATE_READABLE_PASSWORD|old-cookie/,
@@ -85,6 +122,7 @@ test("public catalog exposes activities while private APIs require valid members
       "hours",
       "closed",
       "occupancy",
+      "createdAt",
     ].sort(),
   );
   const detail = await fetch(base + "/api/workshops/public-one");

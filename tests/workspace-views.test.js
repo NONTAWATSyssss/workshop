@@ -19,7 +19,13 @@ async function views(role) {
     URL,
   });
   const modules = [];
-  for (const name of ["activities", "management"]) {
+  for (const name of [
+    "activities",
+    "management",
+    "date-range",
+    "time-picker",
+    "records",
+  ]) {
     const module = new vm.SourceTextModule(
       fs.readFileSync(`public/assets/js/views/${name}.js`, "utf8"),
       { context: runtime },
@@ -102,7 +108,27 @@ async function views(role) {
       document.querySelector("#modal-root").innerHTML = html;
     },
   };
+  context.dateRangeField = modules[2].createDateRangePicker({
+    esc,
+    getRange: () => [state.dateFrom || "", state.dateTo || ""],
+    onChange(from, to) {
+      state.dateFrom = from;
+      state.dateTo = to;
+    },
+  }).field;
+  context.workshopDateRangeField = modules[2].createDateRangePicker({
+    esc,
+    idPrefix: "editor-",
+    getRange: () => ["", ""],
+    onChange() {},
+  }).field;
+  context.workshopTimeField = modules[3].createTimePicker({
+    esc,
+    positionPanel: modules[2].positionPickerPanel,
+    onChange() {},
+  }).field;
   Object.assign(context, modules[0].createActivityViews(context));
+  Object.assign(context, modules[4].createRecordViews(context));
   Object.assign(context, modules[1].createManagementViews(context));
   return { context, document };
 }

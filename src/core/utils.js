@@ -47,6 +47,12 @@ const publicUser = (row) => ({
   status: row.status,
   role: row.role,
 });
+const workshopCoverUrl = (id, version) =>
+  `/api/workshops/${encodeURIComponent(id)}/cover?v=${version}`;
+const publicWorkshopCover = (id, cover) =>
+  typeof cover === "string" && cover.startsWith("data:image/")
+    ? workshopCoverUrl(id, crypto.createHash("md5").update(cover).digest("hex"))
+    : cover || "";
 function validCover(value) {
   if (!value) return true;
   if (
@@ -123,6 +129,8 @@ function validNewPassword(password) {
 }
 
 module.exports = {
+  workshopCoverUrl,
+  publicWorkshopCover,
   isExpired,
   hashToken,
   passwordRecord,

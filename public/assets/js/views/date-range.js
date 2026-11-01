@@ -1,10 +1,33 @@
 // Keep calendar drafts separate from the active workshop filters until Apply.
-export function createDateRangePicker({ esc, getRange, onChange }) {
-  const root = () => document.querySelector("#workshop-date-range");
+export function positionPickerPanel(panel, trigger, { maxHeight = 560 } = {}) {
+  const anchor = trigger.getBoundingClientRect?.();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  if (!anchor || !viewportWidth || !viewportHeight) return;
+  const margin = 12,
+    gap = 8;
+  const width = Math.min(anchor.width || 360, viewportWidth - margin * 2);
+  const top = Math.max(margin, anchor.bottom + gap);
+  panel.style.width = `${width}px`;
+  panel.style.left = `${Math.max(margin, Math.min(anchor.left, viewportWidth - margin - width))}px`;
+  panel.style.top = `${top}px`;
+  panel.style.maxHeight = `${Math.max(0, Math.min(maxHeight, viewportHeight - top - margin))}px`;
+}
+
+export function createDateRangePicker({
+  esc,
+  getRange,
+  onChange,
+  idPrefix = "",
+  floating = false,
+}) {
+  const id = (name) => `${idPrefix}${name}`;
+  const selector = (name) => `#${id(name)}`;
+  const root = () => document.querySelector(selector("workshop-date-range"));
+  const fieldElement = (name) => root()?.querySelector(selector(name));
   const isOpen = () =>
-    root()
-      ?.querySelector("#date-range-trigger")
-      .getAttribute("aria-expanded") === "true";
+    fieldElement("date-range-trigger")?.getAttribute("aria-expanded") ===
+    "true";
   const parse = (value) => new Date(`${value}T00:00:00`);
   const iso = (date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -18,10 +41,11 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
     to = "",
     month,
     choosingEnd = false,
-    activePeriod = null;
+    activePeriod = null,
+    inTopLayer = false;
 
-  function field() {
-    const [start, end] = getRange();
+  function field(range = getRange()) {
+    const [start, end] = range;
     const text =
       start && end
         ? `${label(start)} – ${label(end)}`
@@ -30,7 +54,15 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
           : end
             ? `ถึง ${label(end)}`
             : "เลือกช่วงวันที่";
-    return `<div id="workshop-date-range" class="date-range"><button type="button" id="date-range-trigger" class="date-range-trigger" aria-label="ช่วงวันที่: ${esc(text)}" aria-controls="date-range-panel" aria-expanded="false"><i class="fa-regular fa-calendar" aria-hidden="true"></i><span>${esc(text)}</span></button><div id="date-range-panel" class="date-range-panel" role="group" aria-label="เลือกช่วงวันที่" hidden></div></div>`;
+    return `<div id="${id("workshop-date-range")}" class="date-range"><button type="button" id="${id("date-range-trigger")}" class="date-range-trigger" aria-label="ช่วงวันที่: ${esc(text)}" aria-controls="${id("date-range-panel")}" aria-expanded="false"><i class="fa-regular fa-calendar" aria-hidden="true"></i><span>${esc(text)}</span></button><div id="${id("date-range-panel")}" class="date-range-panel"${floating ? ' popover="manual"' : ""} role="group" aria-label="เลือกช่วงวันที่" hidden></div></div>`;
+  }
+
+  function positionFloatingPanel() {
+    if (!floating || !isOpen()) return;
+    positionPickerPanel(
+      fieldElement("date-range-panel"),
+      fieldElement("date-range-trigger"),
+    );
   }
 
   function showMonth(value) {
@@ -53,15 +85,15 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
   }
 
   function periodControl(period, name, options) {
-    return `<div class="date-range-select"><button type="button" id="range-${period}" class="date-period-trigger" data-date-period="${period}" aria-label="${name}" aria-haspopup="listbox" aria-expanded="false" aria-controls="range-${period}-options"><span class="date-period-label"></span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button><div id="range-${period}-options" class="date-period-options" role="listbox" aria-label="${name}" hidden>${options}</div></div>`;
+    return `<div class="date-range-select"><button type="button" id="${id(`range-${period}`)}" class="date-period-trigger" data-date-period="${period}" aria-label="${name}" aria-haspopup="listbox" aria-expanded="false" aria-controls="${id(`range-${period}-options`)}"><span class="date-period-label"></span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button><div id="${id(`range-${period}-options`)}" class="date-period-options" role="listbox" aria-label="${name}" hidden>${options}</div></div>`;
   }
 
   function closePeriod(restoreFocus = false) {
     if (!activePeriod) return;
-    const trigger = root()?.querySelector(`#range-${activePeriod}`);
+    const trigger = fieldElement(`range-${activePeriod}`);
     if (restoreFocus) trigger?.focus();
     trigger?.setAttribute("aria-expanded", "false");
-    const list = root()?.querySelector(`#range-${activePeriod}-options`);
+    const list = fieldElement(`range-${activePeriod}-options`);
     if (list) list.hidden = true;
     activePeriod = null;
   }
@@ -70,32 +102,35 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
     if (!option) return;
     for (const row of option.parentElement.querySelectorAll('[role="option"]'))
       row.tabIndex = row === option ? 0 : -1;
-    option.focus();
-    option.scrollIntoView?.({ block: "nearest" });
+    option.focus({ preventScroll: floating });
+    if (floating) {
+      const list = option.parentElement;
+      const top = option.offsetTop;
+      const bottom = top + option.offsetHeight;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (bottom > list.scrollTop + list.clientHeight)
+        list.scrollTop = bottom - list.clientHeight;
+    } else option.scrollIntoView?.({ block: "nearest" });
   }
 
   function openPeriod(period) {
     closePeriod();
     activePeriod = period;
-    const picker = root();
-    picker
-      .querySelector(`#range-${period}`)
-      .setAttribute("aria-expanded", "true");
-    const list = picker.querySelector(`#range-${period}-options`);
+    fieldElement(`range-${period}`).setAttribute("aria-expanded", "true");
+    const list = fieldElement(`range-${period}-options`);
     list.hidden = false;
     focusOption(list.querySelector('[aria-selected="true"]'));
   }
 
   function syncPeriod(period, value, text) {
-    const picker = root();
-    const trigger = picker.querySelector(`#range-${period}`);
+    const trigger = fieldElement(`range-${period}`);
     trigger.value = String(value);
     trigger.querySelector(".date-period-label").textContent = text;
     trigger.setAttribute(
       "aria-label",
       `${period === "month" ? "เลือกเดือน" : "เลือกปี พ.ศ."} ${text}`,
     );
-    const list = picker.querySelector(`#range-${period}-options`);
+    const list = fieldElement(`range-${period}-options`);
     if (
       period === "year" &&
       !list.querySelector(`[data-period-value="${value}"]`)
@@ -166,8 +201,8 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
 
   function updateCalendar(focusDate) {
     const picker = root();
-    picker.querySelector("#range-start").value = from;
-    picker.querySelector("#range-end").value = to;
+    fieldElement("range-start").value = from;
+    fieldElement("range-end").value = to;
     syncPeriod(
       "month",
       month.getMonth(),
@@ -180,46 +215,58 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
       : from && to
         ? "กดใช้ช่วงวันที่ เพื่อดูรายการกิจกรรมในช่วงที่เลือก"
         : "เลือกวันเริ่มต้น แล้วเลือกวันสิ้นสุด";
-    if (focusDate) picker.querySelector(`[data-date="${focusDate}"]`)?.focus();
+    if (focusDate)
+      picker
+        .querySelector(`[data-date="${focusDate}"]`)
+        ?.focus({ preventScroll: floating });
+    positionFloatingPanel();
   }
 
   function open() {
     activePeriod = null;
+    inTopLayer = false;
     [from, to] = getRange();
     choosingEnd = false;
     showMonth(from || to);
     const picker = root();
-    picker.querySelector("#date-range-panel").innerHTML =
-      `<div class="date-range-heading"><strong>เลือกช่วงวันที่</strong><button type="button" class="date-range-close" data-date-action="close" aria-label="ปิดปฏิทิน"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div><div class="date-range-inputs"><label for="range-start"><span>วันเริ่มต้น</span><input id="range-start" type="date"></label><label for="range-end"><span>วันสิ้นสุด</span><input id="range-end" type="date"></label></div><div class="date-range-days">${monthNavigation()}<div class="date-range-grid"></div></div><p class="date-range-hint" aria-live="polite"></p><div class="date-range-actions"><button type="button" class="btn small" data-date-action="clear">ล้างวันที่</button><button type="button" class="btn small primary" data-date-action="apply">ใช้ช่วงวันที่</button></div>`;
+    fieldElement("date-range-panel").innerHTML =
+      `<div class="date-range-heading"><strong>เลือกช่วงวันที่</strong><button type="button" class="date-range-close" data-date-action="close" aria-label="ปิดปฏิทิน"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div><div class="date-range-inputs"><label for="${id("range-start")}"><span>วันเริ่มต้น</span><input id="${id("range-start")}" type="date"></label><label for="${id("range-end")}"><span>วันสิ้นสุด</span><input id="${id("range-end")}" type="date"></label></div><div class="date-range-days">${monthNavigation()}<div class="date-range-grid"></div></div><p class="date-range-hint" aria-live="polite"></p><div class="date-range-actions"><button type="button" class="btn small" data-date-action="clear">ล้างวันที่</button><button type="button" class="btn small primary" data-date-action="apply">ใช้ช่วงวันที่</button></div>`;
     updateCalendar();
+    fieldElement("date-range-trigger").setAttribute("aria-expanded", "true");
+    const panel = fieldElement("date-range-panel");
+    panel.hidden = false;
+    if (floating && typeof panel.showPopover === "function") {
+      panel.showPopover();
+      inTopLayer = true;
+    }
+    positionFloatingPanel();
     picker
-      .querySelector("#date-range-trigger")
-      .setAttribute("aria-expanded", "true");
-    picker.querySelector("#date-range-panel").hidden = false;
-    picker.querySelector('[data-date][tabindex="0"]')?.focus();
+      .querySelector('[data-date][tabindex="0"]')
+      ?.focus({ preventScroll: floating });
   }
 
   function close(restoreFocus = false) {
-    const picker = root();
     if (!isOpen()) return;
     closePeriod();
     // Return focus before hiding the panel that may contain the active control.
-    if (restoreFocus) picker.querySelector("#date-range-trigger").focus();
-    picker
-      .querySelector("#date-range-trigger")
-      .setAttribute("aria-expanded", "false");
-    picker.querySelector("#date-range-panel").hidden = true;
+    if (restoreFocus) fieldElement("date-range-trigger").focus();
+    if (inTopLayer) {
+      fieldElement("date-range-panel").hidePopover();
+      inTopLayer = false;
+    }
+    fieldElement("date-range-trigger").setAttribute("aria-expanded", "false");
+    fieldElement("date-range-panel").hidden = true;
   }
 
   function apply(start, end) {
     if (start && end && start > end) [start, end] = [end, start];
     close(true);
     onChange(start, end);
-    document.querySelector("#date-range-trigger")?.focus();
+    fieldElement("date-range-trigger")?.focus();
   }
 
   function click(event) {
-    const picker = event.target.closest?.("#workshop-date-range");
+    const picker = event.target.closest?.(selector("workshop-date-range"));
     if (!picker) {
       close();
       return false;
@@ -240,7 +287,7 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
       return true;
     }
     if (!event.target.closest(".date-range-select")) closePeriod();
-    if (event.target.closest("#date-range-trigger")) {
+    if (event.target.closest(selector("date-range-trigger"))) {
       event.preventDefault();
       if (isOpen()) close(true);
       else open();
@@ -271,8 +318,9 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
   }
 
   function change(event) {
-    if (!["range-start", "range-end"].includes(event.target.id)) return false;
-    if (event.target.id === "range-start") from = event.target.value;
+    if (![id("range-start"), id("range-end")].includes(event.target.id))
+      return false;
+    if (event.target.id === id("range-start")) from = event.target.value;
     else to = event.target.value;
     choosingEnd = false;
     showMonth(event.target.value || from || to);
@@ -296,7 +344,7 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
         event.preventDefault();
         const options = [
           ...root().querySelectorAll(
-            `#range-${activePeriod}-options [role="option"]`,
+            `${selector(`range-${activePeriod}-options`)} [role="option"]`,
           ),
         ];
         const index = options.indexOf(document.activeElement);
@@ -369,5 +417,16 @@ export function createDateRangePicker({ esc, getRange, onChange }) {
     return true;
   }
 
+  if (floating) {
+    window.addEventListener?.("resize", positionFloatingPanel);
+    document.addEventListener(
+      "scroll",
+      (event) => {
+        if (!fieldElement("date-range-panel")?.contains(event.target))
+          positionFloatingPanel();
+      },
+      true,
+    );
+  }
   return { field, click, change, keydown, close };
 }

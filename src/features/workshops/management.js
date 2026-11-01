@@ -10,20 +10,102 @@ module.exports = function createManagementRoutes({
   uid,
   localDateInput,
   viewFromSnapshot,
+  inspectSnapshot,
+  syncUsersSnapshot,
   mergeSnapshot,
   writeSnapshot,
   refreshSnapshot,
+  maintainComplaints,
+  complaintMaintenanceDue,
 }) {
   async function routeApi(req, res, url) {
+    if (
+      req.method === "POST" &&
+      ["/api/notifications/read", "/api/notifications/clear-history"].includes(
+        url.pathname,
+      )
+    ) {
+      const actor = await requireAccess(req, res, "user");
+      if (!actor) return;
+      const data = await bodyJson(req);
+      await db.exec("BEGIN IMMEDIATE");
+      try {
+        const snapshot = await syncUsersSnapshot();
+        const timestamp = now();
+        let changed = false;
+        let deletedCount = 0;
+        if (url.pathname === "/api/notifications/read") {
+          const notice = snapshot.notifications.find(
+            (item) => item.id === data.id && item.userId === actor.user.id,
+          );
+          if (!notice)
+            throw Object.assign(new Error("ไม่พบการแจ้งเตือนนี้"), {
+              status: 404,
+            });
+          if (!notice.readAt) {
+            notice.readAt = timestamp;
+            await db
+              .prepare(
+                "UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL",
+              )
+              .run(timestamp, notice.id, actor.user.id);
+            changed = true;
+          }
+        } else {
+          const cutoff = new Date(
+            Date.parse(timestamp) - 3 * 24 * 60 * 60 * 1000,
+          ).toISOString();
+          const deleted = await db
+            .prepare(
+              "DELETE FROM notifications WHERE user_id=? AND read_at<=? RETURNING id",
+            )
+            .all(actor.user.id, cutoff);
+          const ids = new Set(deleted.map((item) => item.id));
+          deletedCount = ids.size;
+          snapshot.notifications = snapshot.notifications.filter(
+            (item) => !ids.has(item.id),
+          );
+          changed = deletedCount > 0;
+        }
+        if (changed) {
+          snapshot.revision++;
+          await db
+            .prepare(
+              "UPDATE app_state SET revision=?,data_json=?,updated_at=? WHERE id=1",
+            )
+            .run(snapshot.revision, JSON.stringify(snapshot), timestamp);
+        }
+        await db.exec("COMMIT");
+        return json(res, 200, {
+          store: viewFromSnapshot(snapshot, actor.user),
+          deletedCount,
+        });
+      } catch (error) {
+        await db.exec("ROLLBACK");
+        return json(res, error.status || 400, { error: error.message });
+      }
+    }
     if (req.method === "GET" && url.pathname === "/api/store") {
       const actor = await requireAccess(req, res);
       if (!actor) return;
-      const snapshot = readJson(
-        (await db.prepare("SELECT data_json FROM app_state WHERE id=1").get())
-          .data_json,
-      );
+      const inspected = await inspectSnapshot();
+      let snapshot = inspected.snapshot;
+      if (inspected.usersChanged || complaintMaintenanceDue(snapshot)) {
+        // Re-read under the shared lock before making any maintenance changes.
+        await db.exec("BEGIN IMMEDIATE");
+        try {
+          snapshot = await maintainComplaints(await syncUsersSnapshot());
+          await db.exec("COMMIT");
+        } catch (error) {
+          await db.exec("ROLLBACK");
+          throw error;
+        }
+      }
+      const user = snapshot.users.find((item) => item.id === actor.user.id);
+      if (!user || user.status !== "APPROVED")
+        return json(res, 401, { error: "กรุณาเข้าสู่ระบบอีกครั้ง" });
       return json(res, 200, {
-        store: viewFromSnapshot(snapshot, actor.user),
+        store: viewFromSnapshot(snapshot, user),
       });
     }
     if (req.method === "POST" && url.pathname === "/api/store")
@@ -32,6 +114,7 @@ module.exports = function createManagementRoutes({
         if (!actor) return;
         await db.exec("BEGIN IMMEDIATE");
         try {
+          await maintainComplaints(await syncUsersSnapshot());
           const merged = await mergeSnapshot(actor.user, data.store);
           merged.revision =
             (
@@ -119,7 +202,7 @@ module.exports = function createManagementRoutes({
             .run(JSON.stringify(snapshot));
           await db.exec("COMMIT");
           return json(res, 200, {
-            store: snapshot,
+            store: viewFromSnapshot(snapshot, actor.user),
             revision: snapshot.revision,
           });
         } catch (error) {
@@ -204,10 +287,16 @@ module.exports = function createManagementRoutes({
             .prepare("UPDATE app_state SET data_json=? WHERE id=1")
             .run(JSON.stringify(next));
           await db.exec("COMMIT");
-          return json(res, 200, { store: next, revision: next.revision });
+          return json(res, 200, {
+            store: viewFromSnapshot(next, actor.user),
+            revision: next.revision,
+          });
         }
         await db.exec("COMMIT");
-        return json(res, 200, { store: snapshot, revision: snapshot.revision });
+        return json(res, 200, {
+          store: viewFromSnapshot(snapshot, actor.user),
+          revision: snapshot.revision,
+        });
       } catch (error) {
         await db.exec("ROLLBACK");
         return json(res, error.status || 400, {

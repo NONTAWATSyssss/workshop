@@ -34,6 +34,10 @@ module.exports = async function managementApplication({ database: db }) {
     }
     return { user };
   };
+  Object.assign(
+    context,
+    require("../../src/features/workshops/complaints")(context),
+  );
   const { routeApi } = require("../../src/features/workshops/management")(
     context,
   );

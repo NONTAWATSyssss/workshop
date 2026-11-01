@@ -22,30 +22,45 @@ export function createActivityViews(context) {
     toast,
     uid,
     user,
+    $,
+    askConfirm,
+    saveNotificationAction,
   } = context;
   const managedWorkshops = (...args) => context.managedWorkshops(...args);
-  // Edit public announcements here; no separate announcement manager is needed.
+  // Sample news stays local until an announcement manager is introduced.
   const announcements = [
     {
-      id: "membership",
-      label: "เริ่มต้นใช้งาน",
-      title: "สมัครสมาชิกเพื่อเข้าร่วมกิจกรรม",
-      text: "ใช้อีเมลที่คุณใช้งานสมัครสมาชิก แล้วเข้าสู่ระบบเพื่อเลือกเวิร์กช็อปที่สนใจ",
-      icon: "fa-user-plus",
+      id: "learning-week",
+      label: "ข่าวประชาสัมพันธ์",
+      title: "เปิดพื้นที่ให้ทุกไอเดีย ใน BSRU Learning Week",
+      text: "หนึ่งสัปดาห์ของการเรียนรู้ ทดลอง และลงมือทำ พร้อมแลกเปลี่ยนไอเดียกับเพื่อนต่างสาขา",
+      detail:
+        "ร่วมค้นหาทักษะที่ใช่ผ่านกิจกรรมด้านดิจิทัล การออกแบบ และการสื่อสาร เรียนรู้จากการลงมือทำจริง แล้วต่อยอดเป็นผลงานของตัวเอง\n\nกิจกรรมตัวอย่างประกอบด้วยห้องทดลองสร้างสรรค์ การแลกเปลี่ยนผลงาน และเวิร์กช็อปสำหรับผู้เริ่มต้น ติดตามกำหนดการจริงได้จากประกาศของมหาวิทยาลัย",
+      date: "2026-11-01T09:00:00+07:00",
+      image: "/assets/images/image-005.jpg",
+      alt: "พื้นที่ทำงานสร้างสรรค์พร้อมคอมพิวเตอร์สำหรับออกแบบสื่อ",
     },
     {
-      id: "preparation",
-      label: "ก่อนเข้าอบรม",
-      title: "ตรวจสอบกำหนดการก่อนเข้าร่วม",
-      text: "อ่านรายละเอียด วัน เวลา และสถานที่ของแต่ละกิจกรรม วางแผนการเข้าร่วมให้ตรงกับตารางของคุณ",
-      icon: "fa-calendar-check",
+      id: "web-lab",
+      label: "ทักษะดิจิทัล",
+      title: "จากไอเดียสู่เว็บไซต์แรกของคุณ",
+      text: "ชวนเริ่มต้นเรียนรู้การออกแบบและพัฒนาเว็บไซต์ ผ่านโจทย์ใกล้ตัวที่นำไปต่อยอดได้",
+      detail:
+        "รู้จักองค์ประกอบของเว็บไซต์ ฝึกจัดวางเนื้อหา และทดลองสร้างหน้าเว็บง่าย ๆ ด้วยตัวเอง เหมาะสำหรับผู้สนใจทักษะดิจิทัลและนักศึกษาทุกสาขา\n\nเนื้อหานี้เป็นตัวอย่างประกาศ กำหนดการ สถานที่ และเงื่อนไขการเข้าร่วมจริงจะประกาศอีกครั้ง",
+      date: "2026-10-29T09:00:00+07:00",
+      image: "/assets/images/image-003.jpg",
+      alt: "หน้าจอคอมพิวเตอร์แสดงการพัฒนาเว็บไซต์",
     },
     {
-      id: "results",
-      label: "หลังเข้าอบรม",
-      title: "ติดตามผลและชั่วโมงการอบรม",
-      text: "ดูผลการเข้าร่วมและชั่วโมงสะสมในบัญชีของคุณ หลังเจ้าหน้าที่ยืนยันผลการเข้าร่วมกิจกรรม",
-      icon: "fa-graduation-cap",
+      id: "visual-story",
+      label: "กิจกรรมสร้างสรรค์",
+      title: "เล่าเรื่องให้ต่าง ผ่านมุมมองหลังเลนส์",
+      text: "เปิดมุมมองใหม่ให้ภาพถ่าย เรียนรู้แสง องค์ประกอบ และการเล่าเรื่องด้วยภาพ",
+      detail:
+        "ทดลองสร้างเรื่องราวจากสิ่งรอบตัว ฝึกเลือกมุมภาพและใช้แสงให้สอดคล้องกับสิ่งที่อยากสื่อ พร้อมแลกเปลี่ยนมุมมองกับเพื่อนผู้สนใจการถ่ายภาพ\n\nนี่คือเนื้อหาประชาสัมพันธ์ตัวอย่าง ยังไม่ใช่ประกาศเปิดรับสมัครกิจกรรมจริง",
+      date: "2026-10-27T09:00:00+07:00",
+      image: "/assets/images/image-004.jpg",
+      alt: "กล้องถ่ายภาพบนพื้นหลังสีส้ม",
     },
   ];
 
@@ -53,11 +68,24 @@ export function createActivityViews(context) {
     const upcoming = store.workshops
       .filter(
         (workshop) =>
-          !workshop.closed && scheduledPhase(workshop) !== "finished",
+          !workshop.closed &&
+          !workshop.cancelled &&
+          scheduledPhase(workshop) === "upcoming" &&
+          occupancy(workshop.id) < workshop.capacity,
       )
-      .sort((a, b) => new Date(a.start) - new Date(b.start))
-      .slice(0, 3);
-    return `<div class="public-home"><section class="public-hero" aria-labelledby="public-title"><div class="public-hero-copy"><p class="public-institution">พื้นที่การเรียนรู้ของชาว BSRU</p><h1 id="public-title">รู้ข่าวก่อน<br>ไม่พลาดทุกการเรียนรู้</h1><p class="public-hero-description">ติดตามประกาศ ข่าวประชาสัมพันธ์ และกิจกรรมอบรมของมหาวิทยาลัยราชภัฏบ้านสมเด็จเจ้าพระยา</p><div class="public-hero-actions"><button class="btn primary" data-action="public-page" data-id="workshops">สำรวจกิจกรรมอบรม</button><button class="btn" data-action="login">เข้าสู่ระบบสมาชิก</button></div></div><figure class="public-hero-photo"><img src="/assets/images/image-002.jpg" alt="ภาพประกอบการเรียนรู้และแลกเปลี่ยนความคิดร่วมกัน" fetchpriority="high"><figcaption>เรียนรู้ แลกเปลี่ยน และเติบโตไปด้วยกัน</figcaption></figure></section><section class="public-announcements" aria-labelledby="public-news-title"><div class="public-section-heading"><div><p>ติดตามข่าวสารจากเรา</p><h2 id="public-news-title">ประกาศและประชาสัมพันธ์</h2></div><span class="public-section-note">ข้อมูลสำหรับผู้เรียนและบุคลากร</span></div><div class="public-news-list">${announcements.map((item) => `<article class="public-news-item"><span class="public-news-icon" aria-hidden="true"><i class="fa-solid ${item.icon}"></i></span><div><span class="public-news-label">${item.label}</span><h3><button data-action="announcement" data-id="${item.id}">${item.title}</button></h3><p>${item.text}</p></div><button class="public-news-open" data-action="announcement" data-id="${item.id}" aria-label="อ่านประกาศ ${item.title}"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></article>`).join("")}</div></section><section class="public-workshops" aria-labelledby="public-workshops-title"><div class="public-section-heading"><div><p>เรียนรู้สิ่งใหม่ในกิจกรรมถัดไป</p><h2 id="public-workshops-title">กิจกรรมที่กำลังมาถึง</h2></div><button class="btn small" data-action="public-page" data-id="workshops">ดูกิจกรรมทั้งหมด</button></div>${upcoming.length ? `<div class="grid three">${upcoming.map(card).join("")}</div>` : empty("ยังไม่พบเวิร์กช็อปที่กำลังเปิดรับ ติดตามประกาศใหม่ได้ที่หน้านี้")}</section></div>`;
+      .sort(
+        (a, b) =>
+          Date.parse(b.createdAt || b.start) -
+            Date.parse(a.createdAt || a.start) ||
+          Date.parse(a.start) - Date.parse(b.start),
+      );
+    const date = (value) =>
+      new Date(value).toLocaleDateString("th-TH", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    return `<div class="public-home"><section class="public-hero" aria-labelledby="public-title"><div class="public-hero-copy"><p class="public-institution">พื้นที่การเรียนรู้ของชาว BSRU</p><h1 id="public-title">รู้ข่าวก่อน<br>ไม่พลาดทุกการเรียนรู้</h1><p class="public-hero-description">ติดตามประกาศ ข่าวประชาสัมพันธ์ และกิจกรรมอบรมของมหาวิทยาลัยราชภัฏบ้านสมเด็จเจ้าพระยา</p><div class="public-hero-actions"><button type="button" class="btn primary" data-action="public-section" data-id="workshops">ดูกิจกรรมที่เปิดรับ <i class="fa-solid fa-arrow-down" aria-hidden="true"></i></button><button type="button" class="btn" data-action="login">เข้าสู่ระบบสมาชิก</button></div></div><figure class="public-hero-photo"><img src="/assets/images/image-002.jpg" alt="ภาพประกอบการเรียนรู้และแลกเปลี่ยนความคิดร่วมกัน" fetchpriority="high"><figcaption><span>เรียนรู้ แลกเปลี่ยน และเติบโตไปด้วยกัน</span><i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></figcaption></figure></section><section class="public-announcements" aria-labelledby="public-news-title"><div class="public-section-heading"><div><p>เรื่องราวและโอกาสใหม่ในรั้วมหาวิทยาลัย</p><h2 id="public-news-title">ประกาศและประชาสัมพันธ์</h2></div></div><div class="public-news-board">${announcements.map((item, index) => `<article class="public-news-card ${index === 0 ? "is-featured" : ""}"><button type="button" class="public-news-photo" data-action="announcement" data-id="${item.id}" aria-label="อ่านประกาศ ${esc(item.title)}"><img src="${item.image}" alt="${item.alt}" loading="lazy" width="800" height="500"></button><div class="public-news-content"><div class="public-news-meta"><span>${item.label}</span><time datetime="${item.date}">${date(item.date)}</time></div><h3><button type="button" data-action="announcement" data-id="${item.id}">${item.title}</button></h3><p>${item.text}</p><button type="button" class="public-news-read" data-action="announcement" data-id="${item.id}">อ่านต่อ <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div></article>`).join("")}</div></section><section id="public-workshops" class="public-workshops" aria-labelledby="public-workshops-title" tabindex="-1"><div class="public-section-heading"><div><p>เลือกทักษะใหม่ แล้วเริ่มลงมือทำ</p><h2 id="public-workshops-title">กิจกรรมล่าสุดที่ยังเปิดรับ</h2><span class="public-workshops-count">${number(upcoming.length)} กิจกรรม · เรียงจากรายการที่เพิ่มล่าสุด</span></div>${upcoming.length ? '<div class="public-carousel-controls" role="group" aria-label="เลื่อนดูกิจกรรม"><button type="button" data-action="public-carousel" data-id="prev" aria-label="กิจกรรมก่อนหน้า" aria-controls="public-workshop-track"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i></button><button type="button" data-action="public-carousel" data-id="next" aria-label="กิจกรรมถัดไป" aria-controls="public-workshop-track"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div>' : ""}</div>${upcoming.length ? `<div id="public-workshop-track" class="public-workshop-track" tabindex="0" role="region" aria-label="กิจกรรมที่ยังเปิดรับ เลื่อนซ้ายหรือขวาเพื่อดูกิจกรรมเพิ่มเติม">${upcoming.map((w) => `<article class="public-workshop-card" data-workshop-id="${esc(w.id)}"><button type="button" class="public-workshop-photo" data-action="workshop-detail" data-id="${esc(w.id)}" aria-label="ดูรายละเอียด ${esc(w.title)}"><img src="${esc(w.cover || "/assets/images/image-002.jpg")}" alt="ภาพประกอบ ${esc(w.title)}" loading="lazy" width="640" height="360"><span class="public-workshop-open"><span aria-hidden="true"></span>เปิดรับสมัคร</span></button><div class="public-workshop-content"><span class="public-workshop-hours"><i class="fa-regular fa-clock" aria-hidden="true"></i> ${number(w.hours)} ชั่วโมง</span><h3><button type="button" data-action="workshop-detail" data-id="${esc(w.id)}">${esc(w.title)}</button></h3><div class="public-workshop-meta"><span><i class="fa-regular fa-calendar" aria-hidden="true"></i>${esc(fmt(w.start))}</span><span><i class="fa-solid fa-location-dot" aria-hidden="true"></i>${esc(w.place)}</span></div><div class="public-workshop-footer"><span>เหลือ <b>${number(Math.max(0, w.capacity - occupancy(w.id)))}</b> ที่นั่ง</span><button type="button" data-action="workshop-detail" data-id="${esc(w.id)}">ดูรายละเอียด <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button></div></div></article>`).join("")}</div><p class="public-carousel-hint"><i class="fa-solid fa-arrows-left-right" aria-hidden="true"></i> เลื่อนเพื่อดูกิจกรรมเพิ่มเติม</p>` : empty("ยังไม่พบเวิร์กช็อปที่กำลังเปิดรับ ติดตามประกาศใหม่ได้ที่หน้านี้")}</section></div>`;
   }
 
   function announcementDetail(id) {
@@ -65,8 +93,48 @@ export function createActivityViews(context) {
     if (!item) return;
     openModal(
       item.title,
-      `<p class="public-announcement-detail">${item.text}</p><button class="btn primary" data-action="${id === "membership" ? "register" : "close"}">${id === "membership" ? "สมัครสมาชิก" : "ปิดประกาศ"}</button>`,
+      `<article class="public-announcement-modal"><img src="${item.image}" alt="${item.alt}" width="800" height="500"><div class="public-news-meta"><span>${item.label}</span></div><p class="public-announcement-intro">${item.text}</p><p class="public-announcement-detail">${item.detail}</p><button type="button" class="btn" data-action="close">ปิดประกาศ</button></article>`,
     );
+  }
+  function updatePublicCarousel() {
+    const track = $("#public-workshop-track");
+    if (!track) return;
+    const end = Math.max(0, track.scrollWidth - track.clientWidth);
+    const prev = $('[data-action="public-carousel"][data-id="prev"]'),
+      next = $('[data-action="public-carousel"][data-id="next"]');
+    if (prev) prev.disabled = track.scrollLeft <= 1;
+    if (next) next.disabled = track.scrollLeft >= end - 1;
+  }
+  function scrollPublicWorkshops(direction) {
+    const track = $("#public-workshop-track");
+    if (!track) return;
+    const behavior = window.matchMedia?.("(prefers-reduced-motion: reduce)")
+      .matches
+      ? "auto"
+      : "smooth";
+    const width =
+      track.querySelector(".public-workshop-card")?.getBoundingClientRect?.()
+        .width || 320;
+    if (direction === "first" || direction === "last")
+      track.scrollTo?.({
+        left: direction === "first" ? 0 : track.scrollWidth,
+        behavior,
+      });
+    else
+      track.scrollBy?.({
+        left: (direction === "prev" ? -1 : 1) * (width + 20),
+        behavior,
+      });
+  }
+  function scrollPublicSection() {
+    const section = $("#public-workshops");
+    section?.scrollIntoView?.({
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "start",
+    });
+    section?.focus({ preventScroll: true });
   }
   function workshopMeta(w) {
     return `<div class="meta"><span><i class="fa-regular fa-calendar"></i>เริ่ม ${esc(fmt(w.start))}</span><span><i class="fa-regular fa-clock"></i>สิ้นสุด ${esc(fmt(w.end))}</span><span><i class="fa-solid fa-location-dot"></i>${esc(w.place)}</span><span><i class="fa-solid fa-users"></i>เหลือ ${Math.max(0, w.capacity - occupancy(w.id))} จาก ${w.capacity} ที่นั่ง</span><span><i class="fa-solid fa-hourglass-half"></i>จำนวนชั่วโมงอบรม <b>${number(w.hours)} ชั่วโมง</b></span></div>`;
@@ -99,9 +167,11 @@ export function createActivityViews(context) {
           ? '<button class="btn primary space" data-action="enroll" data-id="' +
             w.id +
             '">ลงทะเบียนกิจกรรมนี้</button>'
-          : '<p class="muted">' +
-            (registered ? "คุณลงทะเบียนกิจกรรมนี้แล้ว" : phaseLabel(w)) +
-            "</p>"),
+          : !user() && phase(w) === "upcoming" && occupancy(id) < w.capacity
+            ? '<button type="button" class="btn primary space" data-action="login">เข้าสู่ระบบเพื่อสมัครกิจกรรม</button>'
+            : '<p class="muted">' +
+              (registered ? "คุณลงทะเบียนกิจกรรมนี้แล้ว" : phaseLabel(w)) +
+              "</p>"),
     );
   }
 
@@ -242,67 +312,6 @@ export function createActivityViews(context) {
     }${!list.length ? empty("ไม่พบเวิร์กช็อปที่ตรงกับตัวกรอง") : ""}`;
   }
 
-  function reports() {
-    const regs = store.registrations.filter((r) => r.userId === state.userId);
-    return `${title("MY WORKSHOP REPORT", "รายงานผลและชั่วโมงอบรม", "ชั่วโมงสะสมอัปเดตเมื่อเจ้าหน้าที่บันทึกการเข้าร่วมงาน")}<div class="panel hours-summary space"><div><h2>ชั่วโมงอบรมสะสม</h2><p class="muted">ยืนยันจากสถานะเข้าร่วมงานแล้วเท่านั้น</p></div><strong>${number(regs.reduce((s, r) => s + hoursOf(r), 0))}<small> ชั่วโมง</small></strong></div><div class="space grid">${
-      regs
-        .map((r) => {
-          const w = store.workshops.find((w) => w.id === r.workshopId);
-          return `<article class="panel"><div class="row between"><h3>${esc(w.title)}</h3>${badge(r.status)}</div>${workshopMeta(w)}${w.closed ? '<div class="notice">เจ้าหน้าที่ปิดเวิร์กช็อปนี้แล้ว ไม่เปิดรับลงทะเบียนเพิ่ม</div>' : ""}<div class="notice">ชั่วโมงที่ได้รับ: <b>${number(hoursOf(r))} ชั่วโมง</b>${r.status === "PENDING" ? " · รอเจ้าหน้าที่เช็กชื่อ" : ""}</div><div class="row space">${r.status === "PENDING" ? `<button class="btn small danger" data-action="cancel" data-id="${r.id}">ยกเลิกการลงทะเบียน</button>` : ""}${r.status === "CANCELLED" ? `<button class="btn small primary" data-action="enroll" data-id="${w.id}" ${phase(w) !== "upcoming" || occupancy(w.id) >= w.capacity ? "disabled" : ""}>ลงทะเบียนอีกครั้ง</button>` : ""}${!store.ratings.some((x) => x.eventId === r.ratingEvent) ? `<button class="btn small" data-action="rate-open" data-id="${r.id}">ประเมินขั้นตอนลงทะเบียน</button>` : ""}</div><div class="sub space">อัปเดต ${esc(fmt(r.updatedAt))}</div></article>`;
-        })
-        .join("") ||
-      empty("ยังไม่มีรายการลงทะเบียน เริ่มต้นได้ที่หน้าเวิร์กช็อป")
-    }</div>`;
-  }
-
-  const complaintStatus = (c) =>
-    ({
-      OPEN: "รอเจ้าหน้าที่ตอบกลับ",
-      REPLIED: "เจ้าหน้าที่ตอบกลับแล้ว",
-      CLOSED: "ตอบกลับและปิดเรื่องแล้ว",
-    })[c.status] || c.status;
-
-  function complaintThread(c) {
-    return `<div class="thread-original"><b>เรื่องที่แจ้ง: ${esc(c.issue)}</b><p style="white-space:pre-wrap">${esc(c.detail || "ไม่มีรายละเอียดเพิ่มเติม")}</p><div class="sub">ส่งเมื่อ ${esc(fmt(c.createdAt))}</div></div>${(c.replies || []).map((r) => `<div class="thread-reply"><b>คำตอบจาก ${esc(r.staffName)}</b><p style="white-space:pre-wrap">${esc(r.text)}</p><div class="sub">${esc(fmt(r.createdAt))}</div></div>`).join("")}`;
-  }
-
-  function complaints() {
-    return `${title("SUPPORT CENTER", "รายการคำร้องเรียน", "อ่านข้อความและตอบกลับผู้ใช้งานโดยตรงในแอป")}<div class="grid space">${
-      store.complaints
-        .slice()
-        .reverse()
-        .map(
-          (c) =>
-            `<article class="panel"><div class="row between"><h3>${esc(c.issue)}</h3><span class="badge ${c.status === "OPEN" ? "PENDING" : "APPROVED"}">${complaintStatus(c)}</span></div><p>${esc(c.name)} · ${esc(c.code)}<br><span class="muted">${esc(c.contact)}</span></p>${complaintThread(c)}<button class="btn small primary space" data-action="reply-open" data-id="${c.id}">เขียนคำตอบกลับ</button></article>`,
-        )
-        .join("") || empty("ยังไม่มีคำร้องเรียน")
-    }</div>`;
-  }
-
-  function myComplaints() {
-    const list = store.complaints.filter((c) => c.userId === state.userId);
-    return `${title("MY SUPPORT REQUESTS", "คำร้องของฉัน", "ติดตามเรื่องที่ส่งและอ่านคำตอบจากเจ้าหน้าที่", `<button class="btn primary" data-action="support">ส่งคำร้องใหม่</button>`)}<div class="grid space">${
-      list
-        .slice()
-        .reverse()
-        .map(
-          (c) =>
-            `<article class="panel"><div class="row between"><h3>${esc(c.issue)}</h3><span class="badge ${c.status === "OPEN" ? "PENDING" : "APPROVED"}">${complaintStatus(c)}</span></div>${complaintThread(c)}</article>`,
-        )
-        .join("") || empty("คุณยังไม่มีคำร้องเรียน")
-    }</div>`;
-  }
-
-  function replyModal(id) {
-    if (!staff()) return;
-    const c = store.complaints.find((c) => c.id === id);
-    if (!c) return;
-    openModal(
-      "ตอบกลับคำร้องเรียน",
-      `${complaintThread(c)}<form id="reply-form" data-id="${c.id}" class="space"><div class="field"><label for="reply-text">ข้อความตอบกลับถึงผู้ใช้</label><textarea id="reply-text" name="reply" required minlength="1" maxlength="3000" placeholder="อธิบายการแก้ไข หรือแนะนำขั้นตอนให้ผู้ใช้งาน"></textarea></div><div class="field"><label for="reply-status">สถานะหลังตอบกลับ</label><select id="reply-status" name="status"><option value="REPLIED">ตอบกลับแล้ว / รอติดตามผล</option><option value="CLOSED">ตอบกลับและปิดเรื่อง</option></select></div><div class="error" role="alert"></div><button class="btn primary">ส่งคำตอบกลับ</button></form>`,
-    );
-  }
-
   function notifyUser(userId, title, body, kind, refId) {
     store.notifications.unshift({
       id: uid(),
@@ -316,66 +325,198 @@ export function createActivityViews(context) {
     });
   }
 
-  function notifications() {
-    const list = store.notifications.filter((n) => n.userId === state.userId),
-      isActivity = (n) =>
-        ["attendance", "registration", "workshop"].includes(n.kind),
-      visible = list.filter(
+  let notificationView = "current",
+    notificationId = null,
+    notificationBusy = false;
+  const pendingNotificationReads = new Set();
+  const notificationReadLabel = (notice) =>
+    notice.readAt
+      ? notificationView === "history"
+        ? "ประวัติแจ้งเตือน"
+        : "อ่านแล้ว"
+      : pendingNotificationReads.has(notice.id)
+        ? "กำลังบันทึกการอ่าน…"
+        : "ยังไม่ได้บันทึกสถานะอ่าน";
+  const isActivityNotice = (n) =>
+    ["attendance", "registration", "workshop"].includes(n.kind);
+  const inNotificationHistory = (n) =>
+    n.readAt && Date.parse(n.readAt) <= Date.now() - 72 * 3600000;
+
+  function notificationContent() {
+    const history = notificationView === "history";
+    const mine = store.notifications.filter((n) => n.userId === state.userId);
+    const selected = mine.find((n) => n.id === notificationId);
+    const back = `<button type="button" class="btn small notification-back" data-action="${selected ? "notification-back" : "notification-current"}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> ${selected ? "กลับไปรายการ" : "แจ้งเตือนปัจจุบัน"}</button>`;
+    if (selected) {
+      const complaint =
+        selected.kind === "complaint"
+          ? store.complaints.find(
+              (c) => c.id === selected.refId && c.userId === state.userId,
+            )
+          : null;
+      const related = complaint
+        ? `<button class="btn primary small" data-action="notification-go" data-id="my-complaints">ดูคำร้องของฉัน <span aria-hidden="true">↗</span></button>`
+        : isActivityNotice(selected)
+          ? `<button class="btn primary small" data-action="notification-go" data-id="reports">ดูรายงานผลและชั่วโมงอบรม <span aria-hidden="true">↗</span></button>`
+          : "";
+      return `<section id="notification-center" data-view="${notificationView}">${back}<article class="notification-detail" tabindex="-1"><span class="notification-detail-label" role="status">${notificationReadLabel(selected)}</span><h3>${esc(selected.title)}</h3><time datetime="${esc(selected.createdAt)}">${esc(fmt(selected.createdAt))}</time><p class="notification-detail-message">${esc(selected.body)}</p>${complaint ? context.complaintThread(complaint) : ""}${related}</article></section>`;
+    }
+    const list = mine.filter(
+      (n) => Boolean(inNotificationHistory(n)) === history,
+    );
+    const visible = list
+      .filter(
         (n) =>
-          (state.notificationFilter === "activity"
-            ? isActivity(n)
-            : !isActivity(n)) &&
+          (state.notificationFilter === "all" ||
+            (state.notificationFilter === "activity"
+              ? isActivityNotice(n)
+              : !isActivityNotice(n))) &&
           (!state.notificationQuery ||
-            (n.title + " " + n.body)
+            `${n.title} ${n.body}`
               .toLowerCase()
               .includes(state.notificationQuery.toLowerCase())),
+      )
+      .sort(
+        (a, b) =>
+          Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+          b.id.localeCompare(a.id),
+      );
+    const tabs = [
+      ["all", "ทั้งหมด", list.length],
+      ["general", "ทั่วไป", list.filter((n) => !isActivityNotice(n)).length],
+      ["activity", "กิจกรรม", list.filter(isActivityNotice).length],
+    ];
+    const rows = visible
+      .map((n) => {
+        const icon =
+          n.kind === "complaint"
+            ? "fa-comment-dots"
+            : isActivityNotice(n)
+              ? "fa-calendar-check"
+              : "fa-bell";
+        return `<button type="button" class="notification-center-row ${n.readAt ? "read" : "unread"}" data-action="notification-read" data-id="${esc(n.id)}" aria-label="${n.readAt ? "เปิดอ่าน" : "ยังไม่อ่าน"} ${esc(n.title)}"><span class="notification-center-icon" aria-hidden="true"><i class="fa-regular ${icon}"></i></span><span class="notification-center-copy"><strong>${esc(n.title)}</strong><span class="notification-center-preview">${esc(n.body)}</span><time datetime="${esc(n.createdAt)}">${esc(fmt(n.createdAt))}</time></span><span class="notification-center-indicator" aria-hidden="true">${n.readAt ? "›" : '<span class="notification-unread-dot"></span>'}</span></button>`;
+      })
+      .join("");
+    return `<section id="notification-center" data-view="${notificationView}" aria-busy="${notificationBusy}"><div class="notification-center-heading">${history ? back : "<p>ข่าวสารและความเคลื่อนไหวของคุณ</p>"}<div class="notification-center-actions">${history ? `<button type="button" class="btn small notification-clear" data-action="notification-clear" ${list.length && !notificationBusy ? "" : "disabled"}><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Clear ประวัติ</button>` : `<button type="button" class="btn small" data-action="notification-history" title="ประวัติแจ้งเตือน" aria-label="เปิดประวัติแจ้งเตือน"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span>ประวัติ</span></button>`}</div></div><div class="notification-center-toolbar"><div class="notification-center-filters" role="group" aria-label="หมวดการแจ้งเตือน">${tabs.map(([id, label, count]) => `<button type="button" data-action="notification-filter" data-id="${id}" class="${state.notificationFilter === id ? "active" : ""}" aria-pressed="${state.notificationFilter === id}">${label}<span>${count}</span></button>`).join("")}</div><label class="notification-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="notification-search" type="search" aria-label="ค้นหาการแจ้งเตือน" placeholder="ค้นหาการแจ้งเตือน" value="${esc(state.notificationQuery)}"></label></div><p class="notification-summary" role="status">${visible.length} รายการ${history ? "ในประวัติ" : ` · ยังไม่อ่าน ${list.filter((n) => !n.readAt).length} รายการ`}</p><div class="notification-center-list">${rows || `<div class="notification-center-empty"><i class="fa-regular ${history ? "fa-clock" : "fa-bell-slash"}" aria-hidden="true"></i><h3>${state.notificationQuery ? "ไม่พบรายการที่ค้นหา" : history ? "ยังไม่มีประวัติแจ้งเตือน" : "ไม่มีการแจ้งเตือนในหมวดนี้"}</h3><p>${state.notificationQuery ? "ลองค้นหาด้วยคำอื่น" : history ? "ข้อความที่อ่านครบ 3 วันจะเก็บไว้ที่นี่" : "เมื่อมีข้อความใหม่ จะแสดงที่นี่"}</p>${state.notificationQuery ? '<button type="button" class="btn small" data-action="clear-notification-search">ล้างคำค้นหา</button>' : ""}</div>`}</div><p class="notification-retention"><i class="fa-solid fa-box-archive" aria-hidden="true"></i> ข้อความที่อ่านแล้วจะย้ายเข้าประวัติหลัง 3 วัน</p></section>`;
+  }
+
+  function refreshNotifications({ background = false } = {}) {
+    const previous = $("#notification-center");
+    if (!member() || !previous) return;
+    if (background && notificationId) return;
+    const active = document.activeElement;
+    const scroll = $(".notification-center-list")?.scrollTop || 0;
+    const next = notificationContent();
+    previous.outerHTML = next;
+    $("#dialog-title").textContent = notificationId
+      ? "รายละเอียดการแจ้งเตือน"
+      : notificationView === "history"
+        ? "ประวัติแจ้งเตือน"
+        : "การแจ้งเตือน";
+    const list = $(".notification-center-list");
+    if (list) list.scrollTop = scroll;
+    if (previous.contains(active)) {
+      const replacement = active.id
+        ? document.getElementById(active.id)
+        : [
+            ...document.querySelectorAll("#notification-center [data-action]"),
+          ].find(
+            (item) =>
+              item.dataset.action === active.dataset.action &&
+              item.dataset.id === active.dataset.id,
+          );
+      replacement?.focus({ preventScroll: true });
+    }
+  }
+
+  function openNotifications(view = "current") {
+    if (!member()) return;
+    notificationView = view === "history" ? "history" : "current";
+    notificationId = null;
+    state.notificationFilter = "all";
+    state.notificationQuery = "";
+    if ($("#notification-center")) refreshNotifications();
+    else
+      openModal(
+        notificationView === "history" ? "ประวัติแจ้งเตือน" : "การแจ้งเตือน",
+        notificationContent(),
+      );
+  }
+
+  function notificationBack() {
+    const id = notificationId;
+    notificationId = null;
+    refreshNotifications();
+    [
+      ...document.querySelectorAll(
+        '#notification-center [data-action="notification-read"]',
       ),
-      generalCount = list.filter((n) => !isActivity(n)).length,
-      activityCount = list.filter(isActivity).length,
-      unread = visible.filter((n) => !n.readAt).length;
-    return `${title("YOUR UPDATES", "การแจ้งเตือน", "ติดตามข่าวสารและความเคลื่อนไหวของเวิร์กช็อปได้ที่นี่")}<section class="notification-page"><div class="notification-toolbar"><div class="notification-tabs" role="tablist" aria-label="หมวดการแจ้งเตือน"><button class="notification-tab ${state.notificationFilter === "general" ? "active" : ""}" role="tab" aria-selected="${state.notificationFilter === "general"}" data-action="notification-filter" data-id="general">ทั่วไป <span>${generalCount}</span></button><button class="notification-tab ${state.notificationFilter === "activity" ? "active" : ""}" role="tab" aria-selected="${state.notificationFilter === "activity"}" data-action="notification-filter" data-id="activity">กิจกรรม <span>${activityCount}</span></button></div><label class="notification-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="notification-search" type="search" aria-label="ค้นหาการแจ้งเตือน" placeholder="ค้นหาการแจ้งเตือน" value="${esc(state.notificationQuery)}"></label></div><p class="notification-summary" aria-live="polite">${visible.length} รายการ · ยังไม่อ่าน ${unread} รายการ</p><div class="notification-list">${
-      visible
-        .map((n) => {
-          const icon =
-              n.kind === "attendance"
-                ? "fa-user-check"
-                : n.kind === "complaint"
-                  ? "fa-comment-dots"
-                  : n.kind === "account"
-                    ? "fa-user-shield"
-                    : "fa-newspaper",
-            source = isActivity(n)
-              ? "กิจกรรม BSRU"
-              : n.kind === "complaint"
-                ? "คำร้องของฉัน"
-                : n.kind === "account"
-                  ? "บัญชี BSRU"
-                  : "ข่าวสาร BSRU";
-          return `<button class="notification-card ${n.readAt ? "read" : "unread"}" data-action="notification-read" data-id="${n.id}" aria-label="เปิดอ่าน ${esc(n.title)}"><span class="notification-icon" aria-hidden="true"><i class="fa-solid ${icon}"></i></span><span class="notification-copy"><span class="notification-meta"><span class="notification-source">${source}</span><span class="notification-state">${n.readAt ? "อ่านแล้ว" : "ใหม่"}</span></span><strong>${esc(n.title)}</strong><span class="notification-message">${esc(n.body)}</span><time datetime="${esc(n.createdAt)}">${esc(fmt(n.createdAt))}</time></span><span class="notification-chevron" aria-hidden="true">›</span></button>`;
-        })
-        .join("") ||
-      `<div class="notification-empty"><span class="notification-empty-icon"><i class="fa-solid fa-bell-slash" aria-hidden="true"></i></span><h2>${state.notificationQuery ? "ไม่พบรายการที่ค้นหา" : "ยังไม่มีการแจ้งเตือน"}</h2><p>${state.notificationQuery ? "ลองค้นหาด้วยคำอื่น" : "เมื่อมีข่าวสารหรืออัปเดตจากเวิร์กช็อป รายการจะแสดงที่นี่"}</p>${state.notificationQuery ? '<button class="btn small" data-action="clear-notification-search">ล้างคำค้นหา</button>' : ""}</div>`
-    }</div></section>`;
+    ]
+      .find((item) => item.dataset.id === id)
+      ?.focus();
   }
 
   async function readNotification(id) {
-    if (!member()) return;
-    const n = store.notifications.find(
-      (n) => n.id === id && n.userId === state.userId,
+    const center = $("#notification-center");
+    if (!member() || !center || notificationBusy) return;
+    const actor = state.userId;
+    const notice = store.notifications.find(
+      (item) => item.id === id && item.userId === actor,
     );
-    if (!n) return;
-    n.readAt = n.readAt || new Date().toISOString();
-    await commit();
-    const c =
-      n.kind === "complaint"
-        ? store.complaints.find(
-            (c) => c.id === n.refId && c.userId === state.userId,
-          )
-        : null;
-    openModal(
-      "รายละเอียดการแจ้งเตือน",
-      `<h3>${esc(n.title)}</h3><p style="white-space:pre-wrap">${esc(n.body)}</p><p class="sub">${esc(fmt(n.createdAt))}</p>${c ? complaintThread(c) : ""}<button class="btn primary space" data-action="notification-go" data-id="${c ? "my-complaints" : "reports"}">${c ? "ดูคำร้องของฉัน" : "ดูรายงานผลและชั่วโมงอบรม"}</button>`,
-    );
+    if (!notice) return;
+    const needsRead = !notice.readAt && !pendingNotificationReads.has(id);
+    if (needsRead) pendingNotificationReads.add(id);
+    notificationId = id;
+    refreshNotifications();
+    $(".notification-detail")?.focus({ preventScroll: true });
+    if (!needsRead) return;
+    try {
+      await saveNotificationAction("read", { id });
+    } catch (error) {
+      if (member() && actor === state.userId) toast(error.message);
+    } finally {
+      pendingNotificationReads.delete(id);
+      if (member() && actor === state.userId) {
+        const label = $(".notification-detail-label");
+        const saved = store.notifications.find(
+          (item) => item.id === id && item.userId === actor,
+        );
+        if (notificationId === id && label && saved)
+          label.textContent = notificationReadLabel(saved);
+        refreshNotifications({ background: true });
+      }
+    }
+  }
+
+  async function clearNotificationHistory() {
+    const center = $("#notification-center");
+    if (
+      !member() ||
+      !center ||
+      notificationView !== "history" ||
+      notificationBusy
+    )
+      return;
+    notificationBusy = true;
+    try {
+      if (
+        !(await askConfirm(
+          "ลบประวัติแจ้งเตือนทั้งหมดของคุณหรือไม่? ข้อความที่ยังอยู่ในแจ้งเตือนปัจจุบันจะไม่ถูกลบ และไม่สามารถกู้คืนประวัติที่ลบแล้วได้",
+        ))
+      )
+        return;
+      if (!center.isConnected || !member()) return;
+      const button = center.querySelector('[data-action="notification-clear"]');
+      if (button) button.disabled = true;
+      const result = await saveNotificationAction("clear-history");
+      if (!result || !center.isConnected || !member()) return;
+      toast(`ลบประวัติแจ้งเตือนแล้ว ${result.deletedCount} รายการ`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      notificationBusy = false;
+      if (center.isConnected) refreshNotifications();
+    }
   }
 
   function ratingModal(id) {
@@ -461,17 +602,19 @@ export function createActivityViews(context) {
   return {
     home,
     announcementDetail,
-    complaints,
+    updatePublicCarousel,
+    scrollPublicWorkshops,
+    scrollPublicSection,
     empty,
     enroll,
     learnerDashboard,
-    myComplaints,
-    notifications,
+    openNotifications,
+    refreshNotifications,
+    notificationBack,
+    clearNotificationHistory,
     notifyUser,
     ratingModal,
     readNotification,
-    replyModal,
-    reports,
     supportModal,
     title,
     workshopDetail,

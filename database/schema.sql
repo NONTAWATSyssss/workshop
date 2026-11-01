@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS complaint_replies (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Each side controls its own copy; original rows are purged after both delete.
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS learner_trashed_at TIMESTAMPTZ;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS learner_deleted_at TIMESTAMPTZ;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS staff_cleared_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_complaints_trash ON complaints(learner_trashed_at) WHERE learner_deleted_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS notifications (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
